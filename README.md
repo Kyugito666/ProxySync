@@ -1,6 +1,6 @@
 <div align="center">
   <img src="https://raw.githubusercontent.com/Kyugito666/Kyugito666/main/assets/duong2.gif" alt="Logo" width="200">
-  <h1 align="center">ProxySync Pro</h1>
+  <h1 align="center">ProxySync</h1>
   <p align="center">
     Sebuah tool CLI canggih untuk memvalidasi, mengelola, dan mendistribusikan daftar proxy Anda ke berbagai direktori secara efisien.
   </p>
@@ -9,7 +9,7 @@
     <img src="https://img.shields.io/badge/Python-3.8%2B-blue?style=for-the-badge&logo=python" alt="Python Version">
     <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
     <img src="https://img.shields.io/static/v1?label=PRs&message=welcome&color=brightgreen&style=for-the-badge" alt="PRs Welcome">
-    <img src="https://img.shields.io/github/stars/Kyugito666/ProxySync-Pro?style=for-the-badge&logo=github&label=Stars" alt="GitHub Stars">
+    <img src="https://img.shields.io/github/stars/Kyugito666/ProxySync?style=for-the-badge&logo=github&label=Stars" alt="GitHub Stars">
   </p>
 </div>
 
@@ -17,11 +17,11 @@
 
 ## 🌟 Tampilan Antarmuka
 
-ProxySync Pro menggunakan antarmuka baris perintah (CLI) yang modern dan interaktif, membuatnya mudah dan menyenangkan untuk digunakan.
+ProxySync menggunakan antarmuka baris perintah (CLI) yang modern dan interaktif, membuatnya mudah dan menyenangkan untuk digunakan.
 
 ```text
    ┌───────────────────────────────────┐
-   │           ProxySync Pro           │
+   │             ProxySync             │
    │ Created by Kyugito666 & Gemini AI │
    └───────────────────────────────────┘
 
@@ -50,7 +50,7 @@ ProxySync Pro menggunakan antarmuka baris perintah (CLI) yang modern dan interak
 
 ## 🚀 Memulai
 
-Ikuti langkah-langkah ini untuk menjalankan ProxySync Pro di sistem Anda.
+Ikuti langkah-langkah ini untuk menjalankan ProxySync di sistem Anda.
 
 ### 1. Prasyarat
 
@@ -64,11 +64,11 @@ Proses instalasi dibagi per langkah agar mudah diikuti.
 #### Untuk Windows
 1.  **Clone Repositori**
     ```bash
-    git clone [https://github.com/Kyugito666/ProxySync-Pro.git](https://github.com/Kyugito666/ProxySync-Pro.git)
+    git clone [https://github.com/Kyugito666/ProxySync.git](https://github.com/Kyugito666/ProxySync.git)
     ```
 2.  **Masuk ke Direktori Proyek**
     ```bash
-    cd ProxySync-Pro
+    cd ProxySync
     ```
 3.  **Buat Virtual Environment**
     ```bash
@@ -86,11 +86,11 @@ Proses instalasi dibagi per langkah agar mudah diikuti.
 #### Untuk Linux & macOS
 1.  **Clone Repositori**
     ```bash
-    git clone [https://github.com/Kyugito666/ProxySync-Pro.git](https://github.com/Kyugito666/ProxySync-Pro.git)
+    git clone [https://github.com/Kyugito666/ProxySync.git](https://github.com/Kyugito666/ProxySync.git)
     ```
 2.  **Masuk ke Direktori Proyek**
     ```bash
-    cd ProxySync-Pro
+    cd ProxySync
     ```
 3.  **Buat Virtual Environment**
     ```bash
@@ -125,7 +125,7 @@ Proses instalasi dibagi per langkah agar mudah diikuti.
 ## 📁 Struktur Proyek
 
 ```
-/ProxySyncPro
+/ProxySync
 ├── run.py             # Skrip utama aplikasi
 ├── paths.txt          # Daftar direktori tujuan
 ├── proxy.txt          # Daftar proxy Anda
