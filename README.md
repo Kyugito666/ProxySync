@@ -64,7 +64,7 @@ Proses instalasi dibagi per langkah agar mudah diikuti.
 #### Untuk Windows
 1.  **Clone Repositori**
     ```bash
-    git clone [https://github.com/Kyugito666/ProxySync.git](https://github.com/Kyugito666/ProxySync.git)
+    git clone https://github.com/Kyugito666/ProxySync.git
     ```
 2.  **Masuk ke Direktori Proyek**
     ```bash
@@ -86,7 +86,7 @@ Proses instalasi dibagi per langkah agar mudah diikuti.
 #### Untuk Linux & macOS
 1.  **Clone Repositori**
     ```bash
-    git clone [https://github.com/Kyugito666/ProxySync.git](https://github.com/Kyugito666/ProxySync.git)
+    git clone https://github.com/Kyugito666/ProxySync.git
     ```
 2.  **Masuk ke Direktori Proyek**
     ```bash
