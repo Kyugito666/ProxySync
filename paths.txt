@@ -1,18 +1,1 @@
-C:\Users\ADIT\FishingFrenzy-NTE
-C:\Users\ADIT\MNAutoBot-NTE
-C:\Users\ADIT\PlayAutoBot-NTE
-C:\Users\ADIT\RedactAutoBot-NTE
-C:\Users\ADIT\IntuitionAutoBot-NTE
-C:\Users\ADIT\UomiAutoBot-NTE
-C:\Users\ADIT\CryptalAutoBot-NTE
-C:\Users\ADIT\FaroSwapAutoBot-NTE
-C:\Users\ADIT\PharosV2AutoBot-NTE
-C:\Users\ADIT\Pharos-Auto-Bot
-C:\Users\ADIT\Galkite-AutoInteraction
-C:\Users\ADIT\WayegerAuotBot-NTE
-C:\Users\ADIT\PoseidonAutoBot-NTE
-C:\Users\ADIT\XosTestnetBot-NTE
-C:\Users\ADIT\MovaFaucetBot-NTE
-C:\Users\ADIT\IncentivAutoBot-NTE
-C:\Users\ADIT\EkoxAutoBot-NTE
-C:\Users\ADIT\Downloads\SC\safe
+your path
