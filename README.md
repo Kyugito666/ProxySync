@@ -141,7 +141,7 @@ Proyek ini dibuat dan dikelola dengan ❤️ oleh:
 | Avatar | Kontributor | Peran |
 | :---: |:---:|:---:|
 | <img src="https://avatars.githubusercontent.com/Kyugito666" width="50" style="border-radius:50%"> | **[Kyugito666](https://github.com/Kyugito666)** | Konsep & Pengembangan Utama |
-| <img src="https://i.imgur.com/e53a8hB.png" width="50" style="border-radius:50%"> | **Gemini AI** | Asisten & Refactoring Kode |
+| <img src="https://raw.githubusercontent.com/Kyugito666/Kyugito666/main/assets/gemini.png" width="50" style="border-radius:50%"> | **Gemini AI** | Asisten & Refactoring Kode |
 
 Jangan ragu untuk mengunjungi profil saya dan melihat proyek-proyek lainnya!
 
