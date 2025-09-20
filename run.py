@@ -145,12 +145,17 @@ def distribute_proxies(proxies, paths):
         if not os.path.isdir(path):
             console.print(f"[yellow]Warning: Path not found, skipping: {path}[/yellow]")
             continue
-
-        # Special case for a specific folder name
-        file_name = "proxies.txt" if os.path.basename(os.path.normpath(path)) == "Pharos-Auto-Bot" else "proxy.txt"
-        file_path = os.path.join(path, file_name)
         
         # --- PERUBAHAN DI SINI ---
+        # Mencari nama file proxy secara otomatis
+        file_name = "proxy.txt"
+        if os.path.exists(os.path.join(path, "proxies.txt")):
+            file_name = "proxies.txt"
+        elif os.path.exists(os.path.join(path, "proxy.txt")):
+            file_name = "proxy.txt"
+        
+        file_path = os.path.join(path, file_name)
+        
         # Buat salinan daftar proxy untuk memastikan pengacakan yang independen untuk setiap file.
         proxies_shuffled = proxies[:]
         random.shuffle(proxies_shuffled)
