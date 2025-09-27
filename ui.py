@@ -1,4 +1,5 @@
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.align import Align
 from rich.console import Console
 from rich.panel import Panel
@@ -69,8 +70,7 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
         console.print(f"[yellow]Menyimpan {len(failed_proxies)} proksi gagal ke '{fail_file}'[/yellow]")
     return good_proxies
 
-def manage_paths_menu_display(load_func, source_file):
+def manage_paths_menu_display():
     """UI untuk mengelola paths.txt."""
-    # Fungsi ini tetap di sini sebagai bagian dari UI
     console.print("[yellow]Fitur 'Kelola Path' belum diimplementasikan di struktur baru ini.[/yellow]")
     time.sleep(2)
