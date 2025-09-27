@@ -3,10 +3,8 @@ import random
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor
-
 import requests
-# Mengimpor semua fungsi UI dari file ui.py
-import ui
+import ui  # Mengimpor semua fungsi UI dari file ui.py
 
 # --- Konfigurasi ---
 PROXYLIST_SOURCE_FILE = "proxylist.txt"
@@ -14,13 +12,12 @@ PROXY_SOURCE_FILE = "proxy.txt"
 PATHS_SOURCE_FILE = "paths.txt"
 FAIL_PROXY_FILE = "fail_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
-PROXY_TIMEOUT = 15
-MAX_WORKERS = 25
-CHECK_URLS = ["https://www.google.com", "https://api.ipify.org"]
+PROXY_TIMEOUT = 10  # Timeout lebih cepat untuk tes akurat
+MAX_WORKERS = 30
+CHECK_URL = "https://www.google.com" # Target tunggal yang sangat andal
 RETRY_COUNT = 2
 
 # --- FUNGSI LOGIKA INTI ---
-
 def convert_proxylist_to_http():
     """Membaca dari proxylist.txt, konversi, dan simpan ke proxy.txt."""
     if not os.path.exists(PROXYLIST_SOURCE_FILE):
@@ -31,7 +28,6 @@ def convert_proxylist_to_http():
     if not raw_proxies:
         ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong.[/yellow]")
         return
-
     ui.console.print(f"Mengonversi {len(raw_proxies)} proksi...")
     converted_proxies = []
     for line in raw_proxies:
@@ -39,10 +35,8 @@ def convert_proxylist_to_http():
         if len(parts) == 4:
             ip, port, user, password = parts
             converted_proxies.append(f"http://{user}:{password}@{ip}:{port}")
-    
     with open(PROXY_SOURCE_FILE, "a") as f:
         for proxy in converted_proxies: f.write(proxy + "\n")
-    
     open(PROXYLIST_SOURCE_FILE, "w").close()
     ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi dipindahkan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
 
@@ -70,21 +64,27 @@ def backup_file(file_path, backup_path):
         shutil.copy(file_path, backup_path)
         ui.console.print(f"[green]Backup dibuat: '{backup_path}'[/green]")
 
-def check_proxy_with_retry(proxy):
-    """Mengecek proksi dengan mekanisme coba lagi."""
+def check_proxy_accurate(proxy):
+    """Tes akurat dengan header browser asli dan alasan kegagalan yang detail."""
     proxies_dict = {"http": proxy, "https": proxy}
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
     for attempt in range(RETRY_COUNT):
         try:
-            for url in CHECK_URLS:
-                response = requests.get(url, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
-                response.raise_for_status()
+            response = requests.get(CHECK_URL, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
+            # Webshare sering merespon dengan status 407 jika IP belum diotorisasi
+            if response.status_code == 407:
+                return proxy, False, "Proxy Authentication Required (Periksa Otorisasi IP)"
+            response.raise_for_status() # Error untuk status 4xx/5xx lainnya
             return proxy, True, "OK"
-        except requests.exceptions.RequestException:
+        except requests.exceptions.ProxyError as e:
+             return proxy, False, f"Proxy Error (Periksa Otorisasi IP): {e}"
+        except requests.exceptions.ConnectTimeout:
+            return proxy, False, "Connection Timeout (Periksa Firewall/Koneksi)"
+        except requests.exceptions.RequestException as e:
             if attempt < RETRY_COUNT - 1:
                 time.sleep(1)
             else:
-                return proxy, False, "Gagal"
+                return proxy, False, f"{type(e).__name__}"
     return proxy, False, "Gagal"
 
 def distribute_proxies(proxies, paths):
@@ -112,24 +112,21 @@ def run_full_process():
     backup_file(PROXY_SOURCE_FILE, PROXY_BACKUP_FILE)
     proxies = load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
     if not proxies:
-        ui.console.print("[bold red]Proses berhenti: 'proxy.txt' kosong.[/bold red]")
-        return
+        ui.console.print("[bold red]Proses berhenti: 'proxy.txt' kosong.[/bold red]"); return
     ui.console.print(f"Siap menguji {len(proxies)} proksi unik.")
     ui.console.print("-" * 40)
 
-    ui.console.print("[bold cyan]Langkah 2: Mengecek Proksi...[/bold cyan]")
-    good_proxies = ui.run_concurrent_checks_display(proxies, check_proxy_with_retry, MAX_WORKERS, FAIL_PROXY_FILE)
+    ui.console.print("[bold cyan]Langkah 2: Menjalankan Tes Akurat...[/bold cyan]")
+    good_proxies = ui.run_concurrent_checks_display(proxies, check_proxy_accurate, MAX_WORKERS, FAIL_PROXY_FILE)
     if not good_proxies:
-        ui.console.print("[bold red]Proses berhenti: Tidak ada proksi yang berfungsi.[/bold red]")
-        return
+        ui.console.print("[bold red]Proses berhenti: Tidak ada proksi yang berfungsi.[/bold red]"); return
     ui.console.print(f"[bold green]Ditemukan {len(good_proxies)} proksi yang berfungsi.[/bold green]")
     ui.console.print("-" * 40)
 
     ui.console.print("[bold cyan]Langkah 3: Distribusi...[/bold cyan]")
     paths = load_paths(PATHS_SOURCE_FILE)
     if not paths:
-        ui.console.print("[bold red]Proses berhenti: 'paths.txt' kosong.[/bold red]")
-        return
+        ui.console.print("[bold red]Proses berhenti: 'paths.txt' kosong.[/bold red]"); return
     distribute_proxies(good_proxies, paths)
     ui.console.print("\n[bold green]✅ Semua tugas selesai![/bold green]")
 
@@ -139,7 +136,6 @@ def main():
     while True:
         ui.print_header()
         choice = ui.display_main_menu()
-
         if choice == "1":
             convert_proxylist_to_http()
             ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
@@ -149,8 +145,7 @@ def main():
         elif choice == "3":
             ui.manage_paths_menu_display()
         elif choice == "4":
-            ui.console.print("[bold cyan]Sampai jumpa![/bold cyan]")
-            break
+            ui.console.print("[bold cyan]Sampai jumpa![/bold cyan]"); break
 
 if __name__ == "__main__":
     main()
