@@ -147,7 +147,7 @@ def main():
             run_full_process()
             ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
         elif choice == "3":
-            ui.manage_paths_menu_display(load_paths, PATHS_SOURCE_FILE)
+            ui.manage_paths_menu_display()
         elif choice == "4":
             ui.console.print("[bold cyan]Sampai jumpa![/bold cyan]")
             break
