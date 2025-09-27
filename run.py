@@ -3,6 +3,7 @@ import random
 import shutil
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
 import requests
 from rich.align import Align
 from rich.console import Console
@@ -19,185 +20,277 @@ PROXY_SOURCE_FILE = "proxy.txt"
 PATHS_SOURCE_FILE = "paths.txt"
 FAIL_PROXY_FILE = "fail_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
-PROXY_TIMEOUT = 20
-MAX_WORKERS = 30
-CHECK_URLS = ["https://www.google.com", "https://ifconfig.me/ip"]
+PROXY_TIMEOUT = 10
+MAX_WORKERS = 25
+# --- URL Target untuk Pengecekan Ketat ---
+# Proksi harus berhasil terhubung ke SEMUA URL ini untuk lolos.
+CHECK_URLS = [
+    "https://www.google.com",
+    "https://api.ipify.org",
+    "https://ifconfig.me/ip"
+]
 
-# --- Inisialisasi UI ---
+# --- Inisialisasi UI dan Konsol ---
 console = Console()
 
 def print_header():
+    """Menampilkan header aplikasi."""
     console.clear()
-    title = Text("ProxySync Auto-Repair Mode", style="bold bright_green", justify="center")
+    title = Text("ProxySync Pro", style="bold cyan", justify="center")
     credits = Text("Created by Kyugito666 & Gemini AI", style="bold magenta", justify="center")
     header_table = Table.grid(expand=True)
     header_table.add_row(title)
     header_table.add_row(credits)
-    console.print(Panel(header_table, border_style="bright_green"))
+    console.print(Panel(header_table, border_style="green"))
     console.print()
 
-# --- BAGIAN PALING PENTING: FUNGSI REPARASI BARU ---
-def repair_and_reformat_proxy(line):
-    """
-    Fungsi cerdas untuk memperbaiki format proksi yang rusak dan menstandarkannya.
-    """
-    line = line.strip()
-    try:
-        # Pola 1: Format rusak dari file Anda (http:////pass@ip@http://port...)
-        if line.count('@') > 2 and line.startswith("http:////"):
-            parts = line.split('@')
-            password = parts[1]
-            ip = parts[2]
-            port = parts[3].replace('http://', '')
-            username = parts[-1].replace('//', '').replace('http', '')
-            return f"http://{username}:{password}@{ip}:{port}"
-
-        # Pola 2: Format standar ip:port:user:pass
-        parts = line.split(':')
-        if len(parts) == 4 and '.' in parts[0]:
-            ip, port, user, password = parts
-            return f"http://{user}:{password}@{ip}:{port}"
-
-        # Pola 3: Format standar socks:ip:port:user:pass
-        if len(parts) == 5 and parts[0].lower() in ['socks5', 'socks4']:
-            proto, ip, port, user, password = parts
-            return f"{proto.lower()}://{user}:{password}@{ip}:{port}"
-            
-        # Pola 4: Format sudah benar
-        if '://' in line:
-            return line
-
-    except Exception:
-        # Jika semua upaya gagal, lewati baris ini
-        return None
-        
-    return None # Gagal mengenali format
-
-def load_and_process_proxies(file_path):
-    """Memuat proksi, menjalankan fungsi reparasi, dan menghapus duplikat."""
+# --- Logika Inti ---
+def load_and_deduplicate_proxies(file_path):
+    """Memuat proksi dari file dan menghapus duplikat."""
     if not os.path.exists(file_path):
         console.print(f"[bold red]Error: '{file_path}' tidak ditemukan.[/bold red]")
         return []
-    
-    repaired_proxies = [p for p in (repair_and_reformat_proxy(line) for line in open(file_path)) if p]
-    
-    if not repaired_proxies:
-        console.print(f"[bold red]Gagal memproses proksi. Pastikan format di '{file_path}' tidak kosong atau rusak total.[/bold red]")
+
+    with open(file_path, "r") as f:
+        proxies = [line.strip() for line in f if line.strip()]
+
+    if not proxies:
+        console.print(f"[yellow]'{file_path}' kosong.[/yellow]")
         return []
 
-    unique_proxies = sorted(list(set(repaired_proxies)))
-    console.print(f"[green]Berhasil memperbaiki dan memuat {len(unique_proxies)} proksi unik.[/green]")
-    
-    # Menulis kembali ke file proxy.txt dengan format yang sudah benar
+    unique_proxies = sorted(list(set(proxies)))
+    num_duplicates = len(proxies) - len(unique_proxies)
+
+    if num_duplicates > 0:
+        console.print(f"[yellow]Menghapus {num_duplicates} proksi duplikat.[/yellow]")
+
+    # Timpa file asli dengan daftar yang sudah bersih
     with open(file_path, "w") as f:
-        for proxy in unique_proxies: f.write(proxy + "\n")
-    console.print("[cyan]File 'proxy.txt' telah diperbarui dengan format yang benar.[/cyan]")
-    
+        for proxy in unique_proxies:
+            f.write(proxy + "\n")
+
     return unique_proxies
 
-def check_proxy_universal(proxy):
-    """Mengecek proksi (HTTP atau SOCKS) dengan metode ketat."""
-    proxies_dict = {"http": proxy, "https": proxy}
+def load_paths(file_path):
+    """Memuat path target dari file."""
+    if not os.path.exists(file_path):
+        console.print(f"[bold red]Error: File path '{file_path}' tidak ditemukan.[/bold red]")
+        return []
+    with open(file_path, "r") as f:
+        return [line.strip() for line in f if line.strip() and os.path.isdir(line.strip())]
+
+def backup_file(file_path, backup_path):
+    """Membuat backup dari file yang diberikan."""
+    if os.path.exists(file_path):
+        shutil.copy(file_path, backup_path)
+        console.print(f"[green]Backup dibuat: '{file_path}' -> '{backup_path}'[/green]")
+
+def format_proxy(proxy):
+    """Memastikan URL proksi diformat dengan benar."""
+    if not (proxy.startswith("http://") or proxy.startswith("https://")):
+        return f"http://{proxy}"
+    return proxy
+
+# --- FUNGSI PENGECEKAN YANG DIPERKETAT ---
+def check_proxy(proxy):
+    """
+    Mengecek satu proksi dengan metode ketat.
+    Hanya dianggap valid jika berhasil terhubung ke SEMUA URL target.
+    """
+    proxy_url = format_proxy(proxy)
+    proxies_dict = {"http": proxy_url, "https": proxy_url}
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+
     for url in CHECK_URLS:
         try:
             response = requests.get(url, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
-            response.raise_for_status()
-        except requests.exceptions.RequestException as e:
-            return proxy, False, f"Gagal di {url.split('//')[1]}: {type(e).__name__}"
-    return proxy, True, "OK (Lolos semua tes)"
+            # Jika status code bukan 200 (OK), langsung gagal.
+            if response.status_code != 200:
+                return proxy, False, f"Gagal di {url} (Status: {response.status_code})"
+        except requests.exceptions.RequestException:
+            # Jika terjadi error koneksi apa pun, langsung gagal.
+            return proxy, False, f"Gagal terhubung ke {url}"
+    
+    # Jika loop selesai tanpa gagal, berarti proksi lolos semua tes.
+    return proxy, True, "OK"
 
-# ... (Sisa kode dari versi advance sebelumnya tidak perlu diubah) ...
-def run_concurrent_checks(proxies):
-    good_proxies, failed_proxies_with_reason = [], []
-    progress = Progress(SpinnerColumn(), TextColumn("[progress.description]{task.description}"), BarColumn(), TextColumn("[progress.percentage]{task.percentage:>3.0f}%"), TimeRemainingColumn(), console=console)
+def check_proxies_concurrently(proxies):
+    """Mengecek daftar proksi menggunakan multi-thread dan menampilkan progres."""
+    good_proxies = []
+    failed_proxies = []
+
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        TimeRemainingColumn(),
+        console=console,
+    )
+
     with Live(progress):
-        task = progress.add_task("[cyan]Mengecek proksi (Mode Advance)...[/cyan]", total=len(proxies))
+        task = progress.add_task("[cyan]Mengecek proksi (Tes Ketat)...[/cyan]", total=len(proxies))
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            future_to_proxy = {executor.submit(check_proxy_universal, p): p for p in proxies}
-            for future in as_completed(future_to_proxy):
+            futures = [executor.submit(check_proxy, p) for p in proxies]
+            for future in as_completed(futures):
                 proxy, is_good, message = future.result()
-                (good_proxies if is_good else failed_proxies_with_reason.append((proxy, message))).append(proxy) if is_good else None
+                if is_good:
+                    good_proxies.append(proxy)
+                else:
+                    failed_proxies.append(proxy)
                 progress.update(task, advance=1)
-    if failed_proxies_with_reason:
+
+    # Simpan proksi yang gagal
+    if failed_proxies:
         with open(FAIL_PROXY_FILE, "w") as f:
-            for p, _ in failed_proxies_with_reason: f.write(p + "\n")
-        console.print(f"[yellow]Menyimpan {len(failed_proxies_with_reason)} proksi gagal ke '{FAIL_PROXY_FILE}'[/yellow]")
-        console.print("\n[bold red]Laporan Diagnostik Kegagalan (Contoh):[/bold red]")
-        error_table = Table(title="Analisis Error")
-        error_table.add_column("Proksi (IP:Port)", style="cyan")
-        error_table.add_column("Alasan Kegagalan", style="red")
-        for proxy, reason in failed_pro_with_reason[:10]:
-            proxy_display = proxy.split('@')[1] if '@' in proxy else proxy
-            error_table.add_row(proxy_display, reason)
-        console.print(error_table)
+            for p in failed_proxies:
+                f.write(p + "\n")
+        console.print(f"[yellow]Menyimpan {len(failed_proxies)} proksi gagal ke '{FAIL_PROXY_FILE}'[/yellow]")
+
     return good_proxies
 
 def distribute_proxies(proxies, paths):
-    if not proxies or not paths: return
-    console.print("\n[cyan]Mendistribusikan proksi valid...[/cyan]")
+    """Menyimpan daftar proksi yang sudah diacak ke setiap path target."""
+    if not proxies or not paths:
+        console.print("[red]Tidak ada proksi valid atau path untuk didistribusikan.[/red]")
+        return
+
+    console.print("\n[cyan]Mendistribusikan proksi valid ke direktori target...[/cyan]")
     for path in paths:
         if not os.path.isdir(path):
             console.print(f"[yellow]Peringatan: Path tidak ditemukan, dilewati: {path}[/yellow]")
             continue
-        target_file_name = "proxies.txt" if os.path.exists(os.path.join(path, "proxies.txt")) else "proxy.txt"
-        file_path = os.path.join(path, target_file_name)
-        proxies_shuffled = random.sample(proxies, len(proxies))
+        
+        file_name = "proxy.txt"
+        if os.path.exists(os.path.join(path, "proxies.txt")):
+            file_name = "proxies.txt"
+        elif os.path.exists(os.path.join(path, "proxy.txt")):
+            file_name = "proxy.txt"
+        
+        file_path = os.path.join(path, file_name)
+        
+        proxies_shuffled = proxies[:]
+        random.shuffle(proxies_shuffled)
+
         try:
             with open(file_path, "w") as f:
-                for proxy in proxies_shuffled: f.write(proxy + "\n")
+                for proxy in proxies_shuffled:
+                    f.write(proxy + "\n")
             console.print(f"  [green]✔[/green] Berhasil menulis ke [bold]{file_path}[/bold]")
         except IOError as e:
             console.print(f"  [red]✖[/red] Gagal menulis ke [bold]{file_path}[/bold]: {e}")
 
-def run_full_process():
-    print_header()
-    if os.path.exists(PROXY_SOURCE_FILE):
-        shutil.copy(PROXY_SOURCE_FILE, PROXY_BACKUP_FILE)
-        console.print(f"[green]Backup dibuat: '{PROXY_BACKUP_FILE}'[/green]")
-    
-    console.print("[bold cyan]Langkah 1: Memperbaiki & Memproses Proksi...[/bold cyan]")
-    proxies = load_and_process_proxies(PROXY_SOURCE_FILE)
-    if not proxies:
-        console.print("[bold red]Proses dihentikan.[/bold red]")
-        return
-    console.print("-" * 50)
-    
-    console.print("[bold cyan]Langkah 2: Mengecek Proksi (Mode Advance)...[/bold cyan]")
-    good_proxies = run_concurrent_checks(proxies)
-    if not good_proxies:
-        console.print("[bold red]\nProses dihentikan: Tidak ada proksi yang berfungsi ditemukan.[/bold red]")
-        return
-        
-    console.print(f"[bold green]\nDitemukan {len(good_proxies)} proksi yang berfungsi.[/bold green]")
-    console.print("-" * 50)
-    
-    console.print("[bold cyan]Langkah 3: Memuat Path & Mendistribusikan...[/bold cyan]")
-    paths = [line.strip() for line in open(PATHS_SOURCE_FILE) if line.strip()] if os.path.exists(PATHS_SOURCE_FILE) else []
-    if not paths:
-         console.print("[bold red]Proses dihentikan: Tidak ada path di 'paths.txt'.[/bold red]")
-         return
-    console.print(f"Menemukan {len(paths)} direktori target.")
-    distribute_proxies(good_proxies, paths)
-    console.print("\n[bold green]✅ Semua tugas selesai dengan sukses![/bold green]")
 
-def main():
+# --- Fungsi Menu dan UI ---
+def display_main_menu():
+    """Menampilkan menu utama."""
+    menu_table = Table(title="Main Menu", show_header=False, border_style="magenta")
+    menu_table.add_column("Option", style="cyan", width=5)
+    menu_table.add_column("Description")
+    menu_table.add_row("[1]", "Jalankan Proses Penuh (Backup, Cek, Distribusi)")
+    menu_table.add_row("[2]", "Kelola Path Target")
+    menu_table.add_row("[3]", "Keluar")
+    console.print(Align.center(menu_table))
+
+def manage_paths_menu():
+    """UI untuk mengelola file paths.txt."""
     while True:
         print_header()
-        menu_table = Table(title="Main Menu", show_header=False, border_style="magenta")
-        menu_table.add_column("Option", style="cyan", width=5)
-        menu_table.add_column("Description")
-        menu_table.add_row("[1]", "Jalankan Proses (Auto-Repair)")
-        menu_table.add_row("[2]", "Kelola Path Target")
-        menu_table.add_row("[3]", "Keluar")
-        console.print(Align.center(menu_table))
+        paths = load_paths(PATHS_SOURCE_FILE)
+        table = Table(title=f"Path Target ({len(paths)} ditemukan)", border_style="yellow")
+        table.add_column("#", style="dim", width=4)
+        table.add_column("Directory Path")
+
+        for i, path in enumerate(paths):
+            status = "✔ Ditemukan" if os.path.exists(path) else "✖ Tidak Ditemukan"
+            color = "green" if os.path.exists(path) else "red"
+            table.add_row(str(i + 1), f"[{color}]{path} ({status})[/{color}]")
+
+        console.print(table)
+        console.print("\n[cyan][A][/cyan]dd (Tambah) | [cyan][D][/cyan]elete (Hapus) | [cyan][B][/cyan]ack (Kembali)")
+        choice = Prompt.ask("Pilih opsi", choices=["A", "D", "B"], default="B").upper()
+
+        if choice == "A":
+            new_path = Prompt.ask("Masukkan path lengkap untuk ditambahkan").strip()
+            if os.path.isdir(new_path):
+                with open(PATHS_SOURCE_FILE, "a") as f:
+                    f.write(f"\n{new_path}")
+                console.print(f"[green]Path '{new_path}' ditambahkan.[/green]")
+            else:
+                console.print(f"[red]Error: '{new_path}' bukan direktori yang valid.[/red]")
+            time.sleep(1.5)
+
+        elif choice == "D":
+            if not paths:
+                console.print("[yellow]Tidak ada path untuk dihapus.[/yellow]")
+                time.sleep(1.5)
+                continue
+            try:
+                num_to_delete = int(Prompt.ask("Masukkan nomor # path yang akan dihapus"))
+                if 1 <= num_to_delete <= len(paths):
+                    deleted_path = paths.pop(num_to_delete - 1)
+                    with open(PATHS_SOURCE_FILE, "w") as f:
+                        for p in paths:
+                            f.write(p + "\n")
+                    console.print(f"[green]Path '{deleted_path}' dihapus.[/green]")
+                else:
+                    console.print("[red]Nomor tidak valid.[/red]")
+            except ValueError:
+                console.print("[red]Silakan masukkan nomor yang valid.[/red]")
+            time.sleep(1.5)
+
+        elif choice == "B":
+            break
+
+def run_full_process():
+    """Menjalankan seluruh alur kerja pemrosesan proksi."""
+    print_header()
+
+    console.print("[bold cyan]Langkah 1: Mem-backup file proksi...[/bold cyan]")
+    backup_file(PROXY_SOURCE_FILE, PROXY_BACKUP_FILE)
+    console.print("-" * 30)
+
+    console.print("[bold cyan]Langkah 2: Memuat dan membersihkan daftar proksi...[/bold cyan]")
+    proxies = load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
+    if not proxies:
+        console.print("[bold red]Proses dihentikan: Tidak ada proksi untuk dicek.[/bold red]")
+        return
+    console.print(f"Ditemukan {len(proxies)} proksi unik untuk dites.")
+    console.print("-" * 30)
+
+    console.print("[bold cyan]Langkah 3: Mengecek proksi yang aktif...[/bold cyan]")
+    good_proxies = check_proxies_concurrently(proxies)
+    if not good_proxies:
+        console.print("[bold red]Proses dihentikan: Tidak ada proksi yang berfungsi ditemukan.[/bold red]")
+        return
+    console.print(f"[bold green]Ditemukan {len(good_proxies)} proksi yang berfungsi.[/bold green]")
+    console.print("-" * 30)
+
+    console.print("[bold cyan]Langkah 4: Memuat path target...[/bold cyan]")
+    paths = load_paths(PATHS_SOURCE_FILE)
+    if not paths:
+        console.print("[bold red]Proses dihentikan: Tidak ada path valid di 'paths.txt'.[/bold red]")
+        return
+    console.print(f"Ditemukan {len(paths)} direktori target yang valid.")
+    console.print("-" * 30)
+
+    distribute_proxies(good_proxies, paths)
+
+    console.print("\n[bold green]✅ Semua tugas selesai dengan sukses![/bold green]")
+
+# --- Loop Aplikasi Utama ---
+def main():
+    """Fungsi utama untuk menjalankan aplikasi."""
+    while True:
+        print_header()
+        display_main_menu()
         choice = Prompt.ask("Pilih opsi", choices=["1", "2", "3"], default="3")
+
         if choice == "1":
             run_full_process()
-            Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
+            Prompt.ask("\n[bold]Tekan Enter untuk kembali ke menu utama...[/bold]")
         elif choice == "2":
-             console.print("[yellow]Fitur 'Kelola Path' belum diimplementasikan di versi ini.[/yellow]")
-             time.sleep(2)
+            manage_paths_menu()
         elif choice == "3":
             console.print("[bold cyan]Sampai jumpa![/bold cyan]")
             break
