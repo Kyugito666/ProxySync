@@ -11,10 +11,11 @@ PROXYLIST_SOURCE_FILE = "proxylist.txt"
 PROXY_SOURCE_FILE = "proxy.txt"
 PATHS_SOURCE_FILE = "paths.txt"
 FAIL_PROXY_FILE = "fail_proxy.txt"
+SUCCESS_PROXY_FILE = "success_proxy.txt"  # File baru untuk menyimpan proksi yang berhasil
 PROXY_BACKUP_FILE = "proxy_backup.txt"
 PROXY_TIMEOUT = 10
-MAX_WORKERS = 30
-# --- PERUBAHAN DI SINI: Target tes diubah ke situs yang lebih ramah proksi ---
+MAX_WORKERS = 50 # Dinaikkan untuk tes yang lebih cepat
+# --- Target tes diubah ke situs yang lebih ramah proksi ---
 CHECK_URL = "https://api.ipify.org"
 RETRY_COUNT = 2
 
@@ -48,31 +49,25 @@ def convert_proxylist_to_http():
     
     converted_proxies = []
     for line in raw_proxies:
-        # Jika sudah dalam format URL, langsung tambahkan
         if line.startswith("http://") or line.startswith("https://"):
             converted_proxies.append(line)
             continue
             
         parts = line.split(':')
         
-        # Kasus 1: ip:port
         if len(parts) == 2:
             ip, port = parts
             converted_proxies.append(f"http://{ip}:{port}")
             
-        # Kasus 2: ip:port:user:pass
         elif len(parts) == 4:
-            # Periksa apakah ada '@' untuk membedakan user:pass@ip:port
-            if '@' in parts[1]: # Kemungkinan formatnya user:pass@ip:port
-                 # Coba gabungkan kembali dan proses
+            if '@' in parts[1]:
                  at_parts = line.split('@')
                  if len(at_parts) == 2:
                      converted_proxies.append(f"http://{line}")
-            else: # Asumsi ip:port:user:pass
+            else:
                 ip, port, user, password = parts
                 converted_proxies.append(f"http://{user}:{password}@{ip}:{port}")
         
-        # Kasus 3: user:pass@ip:port (di-split oleh :)
         elif len(parts) == 3 and '@' in parts[1]:
              converted_proxies.append(f"http://{line}")
 
@@ -85,12 +80,10 @@ def convert_proxylist_to_http():
         return
 
     try:
-        # Menggunakan mode 'a' (append) untuk menambahkan ke proxy.txt yang sudah ada
         with open(PROXY_SOURCE_FILE, "a") as f:
             for proxy in converted_proxies:
                 f.write(proxy + "\n")
         
-        # Mengosongkan proxylist.txt setelah berhasil diproses
         open(PROXYLIST_SOURCE_FILE, "w").close()
         
         ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi berhasil dikonversi dan ditambahkan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
@@ -130,7 +123,6 @@ def check_proxy_final(proxy):
             if response.status_code == 407:
                 return proxy, False, "Proxy Authentication Required (Cek Otorisasi IP)"
             response.raise_for_status()
-            # Memastikan respons berisi alamat IP yang valid
             if '.' in response.text or ':' in response.text:
                 return proxy, True, "OK"
             else:
@@ -159,8 +151,28 @@ def distribute_proxies(proxies, paths):
         except IOError as e:
             ui.console.print(f"  [red]✖[/red] Gagal menulis ke [bold]{file_path}[/bold]: {e}")
 
+def save_good_proxies(proxies, file_path):
+    """Menyimpan proksi yang bagus ke file teks."""
+    try:
+        with open(file_path, "w") as f:
+            for proxy in proxies:
+                f.write(proxy + "\n")
+        ui.console.print(f"\n[bold green]✅ {len(proxies)} proksi valid berhasil disimpan ke '{file_path}'[/bold green]")
+    except IOError as e:
+        ui.console.print(f"\n[bold red]✖ Gagal menyimpan proksi: {e}[/bold red]")
+
+
 def run_full_process():
     ui.print_header()
+
+    # --- PERTANYAAN BARU ---
+    distribute_choice = ui.Prompt.ask(
+        "[bold yellow]Distribusikan proksi yang valid ke semua path target?[/bold yellow]",
+        choices=["y", "n"],
+        default="y"
+    ).lower()
+    
+    ui.console.print("-" * 40)
     ui.console.print("[bold cyan]Langkah 1: Backup & Bersihkan Proksi...[/bold cyan]")
     backup_file(PROXY_SOURCE_FILE, PROXY_BACKUP_FILE)
     proxies = load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
@@ -176,12 +188,18 @@ def run_full_process():
     ui.console.print(f"[bold green]Ditemukan {len(good_proxies)} proksi yang berfungsi.[/bold green]")
     ui.console.print("-" * 40)
 
-    ui.console.print("[bold cyan]Langkah 3: Distribusi...[/bold cyan]")
-    paths = load_paths(PATHS_SOURCE_FILE)
-    if not paths:
-        ui.console.print("[bold red]Proses berhenti: 'paths.txt' kosong.[/bold red]"); return
-    distribute_proxies(good_proxies, paths)
-    ui.console.print("\n[bold green]✅ Semua tugas selesai![/bold green]")
+    # --- LOGIKA KONDISIONAL BERDASARKAN PILIHAN ---
+    if distribute_choice == 'y':
+        ui.console.print("[bold cyan]Langkah 3: Distribusi...[/bold cyan]")
+        paths = load_paths(PATHS_SOURCE_FILE)
+        if not paths:
+            ui.console.print("[bold red]Proses berhenti: 'paths.txt' kosong.[/bold red]"); return
+        distribute_proxies(good_proxies, paths)
+        ui.console.print("\n[bold green]✅ Semua tugas selesai![/bold green]")
+    else: # Jika pilihan 'n'
+        ui.console.print(f"[bold cyan]Langkah 3: Menyimpan proksi valid...[/bold cyan]")
+        save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
+
 
 def main():
     while True:
