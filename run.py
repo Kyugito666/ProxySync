@@ -20,25 +20,85 @@ RETRY_COUNT = 2
 
 # --- FUNGSI LOGIKA INTI ---
 def convert_proxylist_to_http():
+    """
+    Mengonversi berbagai format proxy dari proxylist.txt ke format HTTP standar
+    dan menyimpannya di proxy.txt.
+    Mendukung format:
+    - ip:port
+    - ip:port:user:pass
+    - user:pass@ip:port
+    - http://user:pass@ip:port (sudah benar, akan disalin saja)
+    """
     if not os.path.exists(PROXYLIST_SOURCE_FILE):
         ui.console.print(f"[bold red]Error: '{PROXYLIST_SOURCE_FILE}' tidak ditemukan.[/bold red]")
         return
-    with open(PROXYLIST_SOURCE_FILE, "r") as f:
-        raw_proxies = [line.strip() for line in f if line.strip()]
-    if not raw_proxies:
-        ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong.[/yellow]")
+
+    try:
+        with open(PROXYLIST_SOURCE_FILE, "r") as f:
+            raw_proxies = [line.strip() for line in f if line.strip()]
+    except Exception as e:
+        ui.console.print(f"[bold red]Gagal membaca file '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
         return
-    ui.console.print(f"Mengonversi {len(raw_proxies)} proksi...")
+        
+    if not raw_proxies:
+        ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong atau tidak berisi proksi yang valid.[/yellow]")
+        return
+
+    ui.console.print(f"Mendeteksi dan mengonversi {len(raw_proxies)} proksi...")
+    
     converted_proxies = []
     for line in raw_proxies:
+        # Jika sudah dalam format URL, langsung tambahkan
+        if line.startswith("http://") or line.startswith("https://"):
+            converted_proxies.append(line)
+            continue
+            
         parts = line.split(':')
-        if len(parts) == 4:
-            ip, port, user, password = parts
-            converted_proxies.append(f"http://{user}:{password}@{ip}:{port}")
-    with open(PROXY_SOURCE_FILE, "a") as f:
-        for proxy in converted_proxies: f.write(proxy + "\n")
-    open(PROXYLIST_SOURCE_FILE, "w").close()
-    ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi dipindahkan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
+        
+        # Kasus 1: ip:port
+        if len(parts) == 2:
+            ip, port = parts
+            converted_proxies.append(f"http://{ip}:{port}")
+            
+        # Kasus 2: ip:port:user:pass
+        elif len(parts) == 4:
+            # Periksa apakah ada '@' untuk membedakan user:pass@ip:port
+            if '@' in parts[1]: # Kemungkinan formatnya user:pass@ip:port
+                 # Coba gabungkan kembali dan proses
+                 at_parts = line.split('@')
+                 if len(at_parts) == 2:
+                     converted_proxies.append(f"http://{line}")
+            else: # Asumsi ip:port:user:pass
+                ip, port, user, password = parts
+                converted_proxies.append(f"http://{user}:{password}@{ip}:{port}")
+        
+        # Kasus 3: user:pass@ip:port (di-split oleh :)
+        elif len(parts) == 3 and '@' in parts[1]:
+             converted_proxies.append(f"http://{line}")
+
+        else:
+            ui.console.print(f"[yellow]Format tidak dikenali dan dilewati: {line}[/yellow]")
+
+
+    if not converted_proxies:
+        ui.console.print("[bold red]Tidak ada proksi yang berhasil dikonversi.[/bold red]")
+        return
+
+    try:
+        # Menggunakan mode 'a' (append) untuk menambahkan ke proxy.txt yang sudah ada
+        with open(PROXY_SOURCE_FILE, "a") as f:
+            for proxy in converted_proxies:
+                f.write(proxy + "\n")
+        
+        # Mengosongkan proxylist.txt setelah berhasil diproses
+        open(PROXYLIST_SOURCE_FILE, "w").close()
+        
+        ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi berhasil dikonversi dan ditambahkan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
+        ui.console.print(f"[bold cyan]'{PROXYLIST_SOURCE_FILE}' telah dikosongkan.[/bold cyan]")
+
+    except Exception as e:
+        ui.console.print(f"[bold red]Gagal menulis ke file '{PROXY_SOURCE_FILE}': {e}[/bold red]")
+
 
 def load_and_deduplicate_proxies(file_path):
     if not os.path.exists(file_path): return []
