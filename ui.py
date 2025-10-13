@@ -48,33 +48,31 @@ def fetch_from_api(url):
     for attempt in range(max_retries):
         try:
             response = requests.get(url, timeout=45)
-            response.raise_for_status() # Akan memicu error untuk status 4xx/5xx
+            response.raise_for_status()
             content = response.text.strip()
             if content:
-                return url, content.splitlines(), None # Sukses
+                return url, content.splitlines(), None
             error_message = "API tidak mengembalikan konten"
 
         except requests.exceptions.HTTPError as e:
-            # --- LOGIKA BARU: Khusus menangani error 429 ---
             if e.response.status_code == 429:
-                wait_time = 10 * (attempt + 1) # 10s, 20s, 30s
-                console.print(f"[bold yellow]Rate limit terdeteksi. Menunggu {wait_time} detik sebelum mencoba lagi...[/bold yellow]")
+                wait_time = 10 * (attempt + 1)
+                console.print(f"[bold yellow]Rate limit terdeteksi. Menunggu {wait_time} detik...[/bold yellow]")
                 time.sleep(wait_time)
-                error_message = str(e) # Simpan pesan error untuk percobaan terakhir
-                continue # Lanjutkan ke percobaan berikutnya
+                error_message = str(e)
+                continue
             else:
-                error_message = str(e) # Error HTTP lain
-                break # Gagal karena alasan lain, hentikan retry
+                error_message = str(e)
+                break
 
         except requests.exceptions.RequestException as e:
-            error_message = str(e) # Error koneksi/timeout
-            time.sleep(3) # Beri jeda singkat untuk error koneksi
+            error_message = str(e)
+            time.sleep(3)
 
-    # Jika semua percobaan gagal, kembalikan error terakhir
     return url, [], error_message
 
-def run_concurrent_api_downloads(urls, max_workers):
-    """Menampilkan progress bar untuk mengunduh dari banyak API."""
+def run_sequential_api_downloads(urls):
+    """Menjalankan unduhan API satu per satu untuk keandalan maksimal."""
     all_proxies = []
     progress = Progress(
         SpinnerColumn(),
@@ -83,19 +81,19 @@ def run_concurrent_api_downloads(urls, max_workers):
         TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
         console=console
     )
+    # --- LOGIKA BARU: MENGGUNAKAN LOOP BIASA, BUKAN THREADPOOL ---
     with Live(progress):
-        task = progress.add_task("[cyan]Mengunduh dari semua API...[/cyan]", total=len(urls))
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_url = {executor.submit(fetch_from_api, url): url for url in urls}
-            for future in as_completed(future_to_url):
-                url, proxies, error = future.result()
-                if error:
-                    error_msg = str(error).splitlines()[0] 
-                    console.print(f"[bold red]✖ GAGAL FINAL[/bold red] dari {url[:50]}... [dim]({error_msg})[/dim]")
-                else:
-                    console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
-                    all_proxies.extend(proxies)
-                progress.update(task, advance=1)
+        task = progress.add_task("[cyan]Mengunduh satu per satu (mode andal)...[/cyan]", total=len(urls))
+        for url in urls:
+            _, proxies, error = fetch_from_api(url) # Memanggil fungsi fetch secara langsung
+            if error:
+                error_msg = str(error).splitlines()[0]
+                console.print(f"[bold red]✖ GAGAL FINAL[/bold red] dari {url[:50]}... [dim]({error_msg})[/dim]")
+            else:
+                console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
+                all_proxies.extend(proxies)
+            progress.update(task, advance=1)
+            time.sleep(1) # Memberi jeda 1 detik antar setiap unduhan sebagai pengaman tambahan
 
     return all_proxies
 
