@@ -54,8 +54,8 @@ def fetch_from_api(url):
     except requests.exceptions.RequestException as e:
         return url, [], str(e)
 
-def run_concurrent_api_downloads(urls):
-    """Menampilkan progress bar untuk mengunduh dari banyak API."""
+def run_concurrent_api_downloads(urls, max_workers):
+    """Menampilkan progress bar untuk mengunduh dari banyak API dengan jeda."""
     all_proxies = []
     progress = Progress(
         SpinnerColumn(),
@@ -66,17 +66,22 @@ def run_concurrent_api_downloads(urls):
     )
     with Live(progress):
         task = progress.add_task("[cyan]Mengunduh dari semua API...[/cyan]", total=len(urls))
-        with ThreadPoolExecutor(max_workers=10) as executor:
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_url = {executor.submit(fetch_from_api, url): url for url in urls}
             for future in as_completed(future_to_url):
                 url, proxies, error = future.result()
                 if error:
-                    console.print(f"[red]✖ Gagal[/red] dari {url[:50]}... [dim]({error})[/dim]")
+                    # Memotong pesan error agar tidak terlalu panjang
+                    error_msg = str(error).splitlines()[0] 
+                    console.print(f"[red]✖ Gagal[/red] dari {url[:50]}... [dim]({error_msg})[/dim]")
                 else:
                     console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
                     all_proxies.extend(proxies)
                 progress.update(task, advance=1)
+                time.sleep(0.5)  # MENAMBAHKAN JEDA 0.5 DETIK ANTAR REQUEST
+
     return all_proxies
+
 
 def run_concurrent_checks_display(proxies, check_function, max_workers, fail_file):
     """Menampilkan progress bar dan laporan diagnostik."""
