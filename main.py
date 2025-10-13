@@ -17,7 +17,7 @@ SUCCESS_PROXY_FILE = "success_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
 PROXY_TIMEOUT = 10
 MAX_WORKERS = 50
-API_DOWNLOAD_WORKERS = 3 # Kecepatan optimal yang tidak terlalu agresif
+API_DOWNLOAD_WORKERS = 1 # WAJIB 1 UNTUK PROSES SATU PER SATU
 CHECK_URL = "https://api.ipify.org"
 RETRY_COUNT = 2
 
@@ -33,7 +33,7 @@ def load_apis(file_path):
         return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 def download_proxies_from_api():
-    """Mengosongkan proxylist.txt lalu mengunduh proksi dari semua API dengan auto-retry cerdas."""
+    """Mengosongkan proxylist.txt lalu mengunduh proksi dari semua API satu per satu."""
     
     if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
         choice = ui.Prompt.ask(
@@ -59,7 +59,7 @@ def download_proxies_from_api():
         ui.console.print(f"[yellow]Silakan isi file tersebut dengan URL API Anda.[/yellow]")
         return
 
-    all_downloaded_proxies = ui.run_concurrent_api_downloads(api_urls, API_DOWNLOAD_WORKERS)
+    all_downloaded_proxies = ui.run_sequential_api_downloads(api_urls)
 
     if not all_downloaded_proxies:
         ui.console.print("\n[bold yellow]Tidak ada proksi yang berhasil diunduh dari semua API.[/bold yellow]")
