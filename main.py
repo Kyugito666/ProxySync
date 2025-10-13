@@ -11,12 +11,13 @@ import ui  # Mengimpor semua fungsi UI dari file ui.py
 PROXYLIST_SOURCE_FILE = "proxylist.txt"
 PROXY_SOURCE_FILE = "proxy.txt"
 PATHS_SOURCE_FILE = "paths.txt"
-APILIST_SOURCE_FILE = "apilist.txt"  # File baru untuk daftar API
+APILIST_SOURCE_FILE = "apilist.txt"
 FAIL_PROXY_FILE = "fail_proxy.txt"
 SUCCESS_PROXY_FILE = "success_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
 PROXY_TIMEOUT = 10
 MAX_WORKERS = 50
+API_DOWNLOAD_WORKERS = 5  # MENGURANGI PEKERJA UNDUHAN API MENJADI 5
 CHECK_URL = "https://api.ipify.org"
 RETRY_COUNT = 2
 
@@ -25,12 +26,10 @@ RETRY_COUNT = 2
 def load_apis(file_path):
     """Memuat daftar URL API dari file."""
     if not os.path.exists(file_path):
-        # Buat file jika tidak ada
         with open(file_path, "w") as f:
             f.write("# Masukkan URL API Anda di sini, satu per baris\n")
         return []
     with open(file_path, "r") as f:
-        # Abaikan baris kosong dan baris yang diawali dengan '#' (komentar)
         return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 def download_proxies_from_api():
@@ -41,14 +40,14 @@ def download_proxies_from_api():
         ui.console.print(f"[yellow]Silakan isi file tersebut dengan URL API Anda.[/yellow]")
         return
 
-    all_downloaded_proxies = ui.run_concurrent_api_downloads(api_urls)
+    # Menggunakan jumlah worker yang sudah dikurangi
+    all_downloaded_proxies = ui.run_concurrent_api_downloads(api_urls, API_DOWNLOAD_WORKERS)
 
     if not all_downloaded_proxies:
         ui.console.print("\n[bold yellow]Tidak ada proksi yang berhasil diunduh dari semua API.[/bold yellow]")
         return
 
     try:
-        # Menggunakan mode 'a' (append) untuk menambahkan proksi ke proxylist.txt
         with open(PROXYLIST_SOURCE_FILE, "a") as f:
             for proxy in all_downloaded_proxies:
                 f.write(proxy + "\n")
