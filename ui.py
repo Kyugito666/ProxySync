@@ -65,7 +65,7 @@ def run_concurrent_api_downloads(urls, max_workers):
         console=console
     )
     with Live(progress):
-        task = progress.add_task("[cyan]Mengunduh dari semua API...[/cyan]", total=len(urls))
+        task = progress.add_task("[cyan]Mengunduh dari semua API (satu per satu)...[/cyan]", total=len(urls))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_url = {executor.submit(fetch_from_api, url): url for url in urls}
             for future in as_completed(future_to_url):
@@ -78,7 +78,7 @@ def run_concurrent_api_downloads(urls, max_workers):
                     console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
                     all_proxies.extend(proxies)
                 progress.update(task, advance=1)
-                time.sleep(0.5)  # MENAMBAHKAN JEDA 0.5 DETIK ANTAR REQUEST
+                time.sleep(2)  # JEDA WAKTU DIPERPANJANG MENJADI 2 DETIK
 
     return all_proxies
 
