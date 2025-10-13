@@ -3,7 +3,7 @@ import random
 import shutil
 import time
 import re
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import ui  # Mengimpor semua fungsi UI dari file ui.py
 
@@ -11,6 +11,7 @@ import ui  # Mengimpor semua fungsi UI dari file ui.py
 PROXYLIST_SOURCE_FILE = "proxylist.txt"
 PROXY_SOURCE_FILE = "proxy.txt"
 PATHS_SOURCE_FILE = "paths.txt"
+APILIST_SOURCE_FILE = "apilist.txt"  # File baru untuk daftar API
 FAIL_PROXY_FILE = "fail_proxy.txt"
 SUCCESS_PROXY_FILE = "success_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
@@ -20,6 +21,43 @@ CHECK_URL = "https://api.ipify.org"
 RETRY_COUNT = 2
 
 # --- FUNGSI LOGIKA INTI ---
+
+def load_apis(file_path):
+    """Memuat daftar URL API dari file."""
+    if not os.path.exists(file_path):
+        # Buat file jika tidak ada
+        with open(file_path, "w") as f:
+            f.write("# Masukkan URL API Anda di sini, satu per baris\n")
+        return []
+    with open(file_path, "r") as f:
+        # Abaikan baris kosong dan baris yang diawali dengan '#' (komentar)
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+
+def download_proxies_from_api():
+    """Mengunduh proksi dari semua API di apilist.txt secara bersamaan."""
+    api_urls = load_apis(APILIST_SOURCE_FILE)
+    if not api_urls:
+        ui.console.print(f"[bold red]File '{APILIST_SOURCE_FILE}' kosong atau tidak ditemukan.[/bold red]")
+        ui.console.print(f"[yellow]Silakan isi file tersebut dengan URL API Anda.[/yellow]")
+        return
+
+    all_downloaded_proxies = ui.run_concurrent_api_downloads(api_urls)
+
+    if not all_downloaded_proxies:
+        ui.console.print("\n[bold yellow]Tidak ada proksi yang berhasil diunduh dari semua API.[/bold yellow]")
+        return
+
+    try:
+        # Menggunakan mode 'a' (append) untuk menambahkan proksi ke proxylist.txt
+        with open(PROXYLIST_SOURCE_FILE, "a") as f:
+            for proxy in all_downloaded_proxies:
+                f.write(proxy + "\n")
+        
+        ui.console.print(f"\n[bold green]✅ {len(all_downloaded_proxies)} proksi berhasil ditambahkan ke '{PROXYLIST_SOURCE_FILE}'[/bold green]")
+    except IOError as e:
+        ui.console.print(f"\n[bold red]Gagal menulis ke file '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
+
+
 def convert_proxylist_to_http():
     """
     Mengonversi berbagai format proxy dari proxylist.txt, menimpanya ke proxy.txt,
@@ -42,7 +80,6 @@ def convert_proxylist_to_http():
         if not line:
             continue
         
-        # Logika untuk memisahkan proksi yang menempel
         parts = re.split(r'(https?://)', line)
         if len(parts) > 3:
             for i in range(1, len(parts), 2):
@@ -76,7 +113,6 @@ def convert_proxylist_to_http():
         return
 
     try:
-        # Menggunakan mode 'w' untuk menimpa file proxy.txt
         with open(PROXY_SOURCE_FILE, "w") as f:
             for proxy in converted_proxies:
                 f.write(proxy + "\n")
@@ -151,7 +187,6 @@ def distribute_proxies(proxies, paths):
 def save_good_proxies(proxies, file_path):
     """Menyimpan proksi yang bagus ke file teks dengan mode timpa."""
     try:
-        # Menggunakan mode "w" untuk menimpa file
         with open(file_path, "w") as f:
             for proxy in proxies:
                 f.write(proxy + "\n")
@@ -162,11 +197,9 @@ def save_good_proxies(proxies, file_path):
 
 def run_full_process():
     ui.print_header()
-
     distribute_choice = ui.Prompt.ask(
         "[bold yellow]Distribusikan proksi yang valid ke semua path target?[/bold yellow]",
-        choices=["y", "n"],
-        default="y"
+        choices=["y", "n"], default="y"
     ).lower()
     
     ui.console.print("-" * 40)
@@ -202,16 +235,18 @@ def main():
         ui.print_header()
         choice = ui.display_main_menu()
         if choice == "1":
-            convert_proxylist_to_http()
+            download_proxies_from_api()
             ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
         elif choice == "2":
-            run_full_process()
+            convert_proxylist_to_http()
             ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
         elif choice == "3":
-            ui.manage_paths_menu_display()
+            run_full_process()
+            ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
         elif choice == "4":
+            ui.manage_paths_menu_display()
+        elif choice == "5":
             ui.console.print("[bold cyan]Sampai jumpa![/bold cyan]"); break
 
 if __name__ == "__main__":
     main()
-
