@@ -43,19 +43,35 @@ def display_main_menu():
     return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5"], default="5")
 
 def fetch_from_api(url):
-    """Fungsi pembantu untuk mengunduh dari satu URL API."""
-    try:
-        response = requests.get(url, timeout=20)
-        response.raise_for_status()
-        content = response.text.strip()
-        if content:
-            return url, content.splitlines(), None
-        return url, [], "API tidak mengembalikan konten"
-    except requests.exceptions.RequestException as e:
-        return url, [], str(e)
+    """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme auto-retry."""
+    # --- FITUR BARU: Auto-Retry ---
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            # Timeout panjang untuk memberi kesempatan koneksi lambat
+            response = requests.get(url, timeout=60)
+            response.raise_for_status()
+            content = response.text.strip()
+            if content:
+                # Jika sukses, langsung kembalikan hasil
+                return url, content.splitlines(), None
+            # Jika konten kosong, anggap gagal dan coba lagi
+            error_message = "API tidak mengembalikan konten"
+
+        except requests.exceptions.RequestException as e:
+            error_message = str(e)
+        
+        # Jika loop belum berakhir, tampilkan pesan retry dan tunggu
+        if attempt < max_retries - 1:
+            console.print(f"[yellow]Mencoba lagi ({attempt+1}/{max_retries-1}) untuk {url[:50]}...[/yellow]")
+            time.sleep(2 * (attempt + 1)) # Jeda makin lama: 2s, 4s
+
+    # Jika semua percobaan gagal, kembalikan error terakhir
+    return url, [], error_message
+    # --- AKHIR FITUR BARU ---
 
 def run_concurrent_api_downloads(urls, max_workers):
-    """Menampilkan progress bar untuk mengunduh dari banyak API dengan jeda."""
+    """Menampilkan progress bar untuk mengunduh dari banyak API (tanpa delay)."""
     all_proxies = []
     progress = Progress(
         SpinnerColumn(),
@@ -65,20 +81,19 @@ def run_concurrent_api_downloads(urls, max_workers):
         console=console
     )
     with Live(progress):
-        task = progress.add_task("[cyan]Mengunduh dari semua API (satu per satu)...[/cyan]", total=len(urls))
+        task = progress.add_task("[cyan]Mengunduh dari semua API...[/cyan]", total=len(urls))
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             future_to_url = {executor.submit(fetch_from_api, url): url for url in urls}
             for future in as_completed(future_to_url):
                 url, proxies, error = future.result()
                 if error:
-                    # Memotong pesan error agar tidak terlalu panjang
                     error_msg = str(error).splitlines()[0] 
-                    console.print(f"[red]✖ Gagal[/red] dari {url[:50]}... [dim]({error_msg})[/dim]")
+                    console.print(f"[bold red]✖ GAGAL FINAL[/bold red] dari {url[:50]}... [dim]({error_msg})[/dim]")
                 else:
                     console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
                     all_proxies.extend(proxies)
                 progress.update(task, advance=1)
-                time.sleep(2)  # JEDA WAKTU DIPERPANJANG MENJADI 2 DETIK
+                # JEDA ANTAR UNDUHAN DIHAPUS
 
     return all_proxies
 
