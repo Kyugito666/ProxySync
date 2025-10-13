@@ -1,0 +1,3 @@
+https://proxy.webshare.io/api/v2/proxy/list/download/URL_API_ANDA_1/-/any/username/direct/-/?plan_id=xxxx
+https://contoh.api.lain/proxy/list/download/URL_API_ANDA_2
+# Anda bisa menambahkan URL sebanyak yang Anda mau, satu per baris
