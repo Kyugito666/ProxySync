@@ -15,10 +15,14 @@ APILIST_SOURCE_FILE = "apilist.txt"
 FAIL_PROXY_FILE = "fail_proxy.txt"
 SUCCESS_PROXY_FILE = "success_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
-PROXY_TIMEOUT = 10
-MAX_WORKERS = 50
-API_DOWNLOAD_WORKERS = 1 # WAJIB 1 UNTUK PROSES SATU PER SATU
-CHECK_URL = "https://api.ipify.org"
+
+# --- PERUBAHAN UTAMA UNTUK TES PROXY ---
+PROXY_TIMEOUT = 20  # Waktu tunggu dinaikkan menjadi 20 detik
+MAX_WORKERS = 15    # Jumlah tes simultan dikurangi menjadi 15
+CHECK_URLS = ["https://api.ipify.org", "http://httpbin.org/ip"] # Target utama dan cadangan
+# --- AKHIR PERUBAHAN ---
+
+API_DOWNLOAD_WORKERS = 1
 RETRY_COUNT = 2
 
 # --- FUNGSI LOGIKA INTI ---
@@ -34,7 +38,6 @@ def load_apis(file_path):
 
 def download_proxies_from_api():
     """Mengosongkan proxylist.txt lalu mengunduh proksi dari semua API satu per satu."""
-    
     if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
         choice = ui.Prompt.ask(
             f"[bold yellow]File '{PROXYLIST_SOURCE_FILE}' berisi data. Hapus konten lama sebelum mengunduh?[/bold yellow]",
@@ -161,24 +164,32 @@ def backup_file(file_path, backup_path):
         ui.console.print(f"[green]Backup dibuat: '{backup_path}'[/green]")
 
 def check_proxy_final(proxy):
+    """Fungsi pengetesan proksi yang telah dioptimalkan."""
     proxies_dict = {"http": proxy, "https": proxy}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36'}
-    for attempt in range(RETRY_COUNT):
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+    
+    for url in CHECK_URLS: # Mencoba setiap URL di dalam daftar
         try:
-            response = requests.get(CHECK_URL, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
+            response = requests.get(url, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
+            
             if response.status_code == 407:
-                return proxy, False, "Proxy Authentication Required"
-            response.raise_for_status()
+                return proxy, False, "Proxy Membutuhkan Otentikasi"
+            
+            response.raise_for_status() # Cek status 200 OK
+            
+            # Memastikan respons berisi alamat IP
             if '.' in response.text or ':' in response.text:
                 return proxy, True, "OK"
             else:
-                return proxy, False, "Respons tidak valid"
+                # Jika respons aneh, lanjut ke URL berikutnya
+                continue
+
         except requests.exceptions.RequestException:
-            if attempt < RETRY_COUNT - 1:
-                time.sleep(1)
-            else:
-                return proxy, False, "Gagal Terhubung"
-    return proxy, False, "Gagal"
+            # Jika ada error koneksi, lanjut ke URL berikutnya
+            continue
+            
+    # Jika semua URL gagal, baru nyatakan proksi mati
+    return proxy, False, "Gagal Terhubung"
 
 def distribute_proxies(proxies, paths):
     if not proxies or not paths: return
