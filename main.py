@@ -17,7 +17,7 @@ SUCCESS_PROXY_FILE = "success_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
 PROXY_TIMEOUT = 10
 MAX_WORKERS = 50
-API_DOWNLOAD_WORKERS = 5 # Ditingkatkan agar lebih cepat, karena sudah ada auto-retry
+API_DOWNLOAD_WORKERS = 3 # Kecepatan optimal yang tidak terlalu agresif
 CHECK_URL = "https://api.ipify.org"
 RETRY_COUNT = 2
 
@@ -33,9 +33,8 @@ def load_apis(file_path):
         return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 def download_proxies_from_api():
-    """Mengosongkan proxylist.txt lalu mengunduh proksi dari semua API dengan auto-retry."""
+    """Mengosongkan proxylist.txt lalu mengunduh proksi dari semua API dengan auto-retry cerdas."""
     
-    # --- Fitur Hapus Otomatis ---
     if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
         choice = ui.Prompt.ask(
             f"[bold yellow]File '{PROXYLIST_SOURCE_FILE}' berisi data. Hapus konten lama sebelum mengunduh?[/bold yellow]",
@@ -47,14 +46,12 @@ def download_proxies_from_api():
             return
     
     try:
-        # Mengosongkan file dengan membukanya dalam mode 'w' (write)
         with open(PROXYLIST_SOURCE_FILE, "w") as f:
             pass
         ui.console.print(f"[green]'{PROXYLIST_SOURCE_FILE}' telah siap untuk diisi data baru.[/green]\n")
     except IOError as e:
         ui.console.print(f"[bold red]Gagal membersihkan file: {e}[/bold red]")
         return
-    # --- Akhir Fitur ---
 
     api_urls = load_apis(APILIST_SOURCE_FILE)
     if not api_urls:
@@ -79,10 +76,6 @@ def download_proxies_from_api():
 
 
 def convert_proxylist_to_http():
-    """
-    Mengonversi berbagai format proxy dari proxylist.txt, menimpanya ke proxy.txt,
-    dan menangani baris yang menempel.
-    """
     if not os.path.exists(PROXYLIST_SOURCE_FILE):
         ui.console.print(f"[bold red]Error: '{PROXYLIST_SOURCE_FILE}' tidak ditemukan.[/bold red]")
         return
@@ -205,7 +198,6 @@ def distribute_proxies(proxies, paths):
             ui.console.print(f"  [red]✖[/red] Gagal menulis ke [bold]{file_path}[/bold]: {e}")
 
 def save_good_proxies(proxies, file_path):
-    """Menyimpan proksi yang bagus ke file teks dengan mode timpa."""
     try:
         with open(file_path, "w") as f:
             for proxy in proxies:
