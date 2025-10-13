@@ -1,4 +1,5 @@
 import time
+import requests
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from rich.align import Align
 from rich.console import Console
@@ -33,12 +34,49 @@ def display_main_menu():
     menu_table = Table(title="Main Menu", show_header=False, border_style="magenta")
     menu_table.add_column("Option", style="cyan", width=5)
     menu_table.add_column("Description")
-    menu_table.add_row("[1]", "Konversi 'proxylist.txt'")
-    menu_table.add_row("[2]", "Jalankan Tes Akurat & Distribusi")
-    menu_table.add_row("[3]", "Kelola Path Target")
-    menu_table.add_row("[4]", "Keluar")
+    menu_table.add_row("[1]", "Unduh Proksi dari Daftar API")
+    menu_table.add_row("[2]", "Konversi 'proxylist.txt'")
+    menu_table.add_row("[3]", "Jalankan Tes Akurat & Distribusi")
+    menu_table.add_row("[4]", "Kelola Path Target")
+    menu_table.add_row("[5]", "Keluar")
     console.print(Align.center(menu_table))
-    return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4"], default="4")
+    return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5"], default="5")
+
+def fetch_from_api(url):
+    """Fungsi pembantu untuk mengunduh dari satu URL API."""
+    try:
+        response = requests.get(url, timeout=20)
+        response.raise_for_status()
+        content = response.text.strip()
+        if content:
+            return url, content.splitlines(), None
+        return url, [], "API tidak mengembalikan konten"
+    except requests.exceptions.RequestException as e:
+        return url, [], str(e)
+
+def run_concurrent_api_downloads(urls):
+    """Menampilkan progress bar untuk mengunduh dari banyak API."""
+    all_proxies = []
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
+        console=console
+    )
+    with Live(progress):
+        task = progress.add_task("[cyan]Mengunduh dari semua API...[/cyan]", total=len(urls))
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            future_to_url = {executor.submit(fetch_from_api, url): url for url in urls}
+            for future in as_completed(future_to_url):
+                url, proxies, error = future.result()
+                if error:
+                    console.print(f"[red]✖ Gagal[/red] dari {url[:50]}... [dim]({error})[/dim]")
+                else:
+                    console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
+                    all_proxies.extend(proxies)
+                progress.update(task, advance=1)
+    return all_proxies
 
 def run_concurrent_checks_display(proxies, check_function, max_workers, fail_file):
     """Menampilkan progress bar dan laporan diagnostik."""
@@ -68,7 +106,6 @@ def run_concurrent_checks_display(proxies, check_function, max_workers, fail_fil
             for p, _ in failed_proxies_with_reason: f.write(p + "\n")
         console.print(f"\n[yellow]Menyimpan {len(failed_proxies_with_reason)} proksi gagal ke '{fail_file}'[/yellow]")
 
-        # Laporan Diagnostik
         error_table = Table(title="Laporan Diagnostik Kegagalan (Contoh)")
         error_table.add_column("Proksi (IP:Port)", style="cyan")
         error_table.add_column("Alasan Kegagalan", style="red")
