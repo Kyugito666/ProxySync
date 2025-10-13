@@ -43,35 +43,38 @@ def display_main_menu():
     return Prompt.ask("Pilih opsi", choices=["1", "2", "3", "4", "5"], default="5")
 
 def fetch_from_api(url):
-    """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme auto-retry."""
-    # --- FITUR BARU: Auto-Retry ---
+    """Fungsi pembantu untuk mengunduh dari satu URL API dengan mekanisme backoff."""
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            # Timeout panjang untuk memberi kesempatan koneksi lambat
-            response = requests.get(url, timeout=60)
-            response.raise_for_status()
+            response = requests.get(url, timeout=45)
+            response.raise_for_status() # Akan memicu error untuk status 4xx/5xx
             content = response.text.strip()
             if content:
-                # Jika sukses, langsung kembalikan hasil
-                return url, content.splitlines(), None
-            # Jika konten kosong, anggap gagal dan coba lagi
+                return url, content.splitlines(), None # Sukses
             error_message = "API tidak mengembalikan konten"
 
+        except requests.exceptions.HTTPError as e:
+            # --- LOGIKA BARU: Khusus menangani error 429 ---
+            if e.response.status_code == 429:
+                wait_time = 10 * (attempt + 1) # 10s, 20s, 30s
+                console.print(f"[bold yellow]Rate limit terdeteksi. Menunggu {wait_time} detik sebelum mencoba lagi...[/bold yellow]")
+                time.sleep(wait_time)
+                error_message = str(e) # Simpan pesan error untuk percobaan terakhir
+                continue # Lanjutkan ke percobaan berikutnya
+            else:
+                error_message = str(e) # Error HTTP lain
+                break # Gagal karena alasan lain, hentikan retry
+
         except requests.exceptions.RequestException as e:
-            error_message = str(e)
-        
-        # Jika loop belum berakhir, tampilkan pesan retry dan tunggu
-        if attempt < max_retries - 1:
-            console.print(f"[yellow]Mencoba lagi ({attempt+1}/{max_retries-1}) untuk {url[:50]}...[/yellow]")
-            time.sleep(2 * (attempt + 1)) # Jeda makin lama: 2s, 4s
+            error_message = str(e) # Error koneksi/timeout
+            time.sleep(3) # Beri jeda singkat untuk error koneksi
 
     # Jika semua percobaan gagal, kembalikan error terakhir
     return url, [], error_message
-    # --- AKHIR FITUR BARU ---
 
 def run_concurrent_api_downloads(urls, max_workers):
-    """Menampilkan progress bar untuk mengunduh dari banyak API (tanpa delay)."""
+    """Menampilkan progress bar untuk mengunduh dari banyak API."""
     all_proxies = []
     progress = Progress(
         SpinnerColumn(),
@@ -93,7 +96,6 @@ def run_concurrent_api_downloads(urls, max_workers):
                     console.print(f"[green]✔ Berhasil[/green] dari {url[:50]}... ({len(proxies)} proksi)")
                     all_proxies.extend(proxies)
                 progress.update(task, advance=1)
-                # JEDA ANTAR UNDUHAN DIHAPUS
 
     return all_proxies
 
