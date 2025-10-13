@@ -17,7 +17,7 @@ SUCCESS_PROXY_FILE = "success_proxy.txt"
 PROXY_BACKUP_FILE = "proxy_backup.txt"
 PROXY_TIMEOUT = 10
 MAX_WORKERS = 50
-API_DOWNLOAD_WORKERS = 1  # PALING SANTAI: HANYA 1 PEKERJA (SATU PER SATU)
+API_DOWNLOAD_WORKERS = 5 # Ditingkatkan agar lebih cepat, karena sudah ada auto-retry
 CHECK_URL = "https://api.ipify.org"
 RETRY_COUNT = 2
 
@@ -33,14 +33,35 @@ def load_apis(file_path):
         return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 def download_proxies_from_api():
-    """Mengunduh proksi dari semua API di apilist.txt secara bersamaan."""
+    """Mengosongkan proxylist.txt lalu mengunduh proksi dari semua API dengan auto-retry."""
+    
+    # --- Fitur Hapus Otomatis ---
+    if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
+        choice = ui.Prompt.ask(
+            f"[bold yellow]File '{PROXYLIST_SOURCE_FILE}' berisi data. Hapus konten lama sebelum mengunduh?[/bold yellow]",
+            choices=["y", "n"],
+            default="y"
+        ).lower()
+        if choice == 'n':
+            ui.console.print("[cyan]Operasi dibatalkan. Proksi tidak diunduh.[/cyan]")
+            return
+    
+    try:
+        # Mengosongkan file dengan membukanya dalam mode 'w' (write)
+        with open(PROXYLIST_SOURCE_FILE, "w") as f:
+            pass
+        ui.console.print(f"[green]'{PROXYLIST_SOURCE_FILE}' telah siap untuk diisi data baru.[/green]\n")
+    except IOError as e:
+        ui.console.print(f"[bold red]Gagal membersihkan file: {e}[/bold red]")
+        return
+    # --- Akhir Fitur ---
+
     api_urls = load_apis(APILIST_SOURCE_FILE)
     if not api_urls:
         ui.console.print(f"[bold red]File '{APILIST_SOURCE_FILE}' kosong atau tidak ditemukan.[/bold red]")
         ui.console.print(f"[yellow]Silakan isi file tersebut dengan URL API Anda.[/yellow]")
         return
 
-    # Menggunakan jumlah worker yang sudah dikurangi
     all_downloaded_proxies = ui.run_concurrent_api_downloads(api_urls, API_DOWNLOAD_WORKERS)
 
     if not all_downloaded_proxies:
@@ -48,11 +69,11 @@ def download_proxies_from_api():
         return
 
     try:
-        with open(PROXYLIST_SOURCE_FILE, "a") as f:
+        with open(PROXYLIST_SOURCE_FILE, "w") as f:
             for proxy in all_downloaded_proxies:
                 f.write(proxy + "\n")
         
-        ui.console.print(f"\n[bold green]✅ {len(all_downloaded_proxies)} proksi berhasil ditambahkan ke '{PROXYLIST_SOURCE_FILE}'[/bold green]")
+        ui.console.print(f"\n[bold green]✅ {len(all_downloaded_proxies)} proksi baru berhasil disimpan ke '{PROXYLIST_SOURCE_FILE}'[/bold green]")
     except IOError as e:
         ui.console.print(f"\n[bold red]Gagal menulis ke file '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
 
