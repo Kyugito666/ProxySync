@@ -1,0 +1,24 @@
+# Python Virtual Environment (dari README.md)
+venv/
+*.venv/
+.venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# File Konfigurasi & Kredensial (SANGAT PENTING)
+apikeys.txt
+apilist.txt
+paths.txt
+
+# File Data & Log (Generated)
+proxy.txt
+proxylist.txt
+fail_proxy.txt
+success_proxy.txt
+proxy_backup.txt
+
+# File OS/IDE
+.DS_Store
+.vscode/
