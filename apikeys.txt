@@ -1,0 +1,4 @@
+# Masukkan API key Webshare Anda di sini, SATU per baris
+# Baris yang diawali # akan diabaikan
+vftisr9oettvwtlxwn08x1f02f8sfl6er3rgfi86
+9ngj18kdmu1tvb3yewgvvaj2ug16qvw6bxj1oozl
