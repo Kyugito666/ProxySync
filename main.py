@@ -23,8 +23,10 @@ WEBSHARE_APIKEYS_FILE = "apikeys.txt"
 # --- Konfigurasi Webshare (BARU) ---
 WEBSHARE_AUTH_URL = "https://proxy.webshare.io/api/v2/proxy/ipauthorization/"
 WEBSHARE_SUB_URL = "https://proxy.webshare.io/api/v2/subscription/"
-WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/" # <-- BARU
-WEBSHARE_DOWNLOAD_URL_FORMAT = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/{username}/direct/-/?plan_id={plan_id}" # <-- BARU
+WEBSHARE_CONFIG_URL = "https://proxy.webshare.io/api/v2/proxy/config/"
+WEBSHARE_PROFILE_URL = "https://proxy.webshare.io/api/v2/profile/"
+WEBSHARE_DOWNLOAD_URL_BASE = "https://proxy.webshare.io/api/v2/proxy/list/download/{token}/-/any/username/direct/-/"
+WEBSHARE_DOWNLOAD_URL_FORMAT = WEBSHARE_DOWNLOAD_URL_BASE + "?plan_id={plan_id}"
 IP_CHECK_SERVICE_URL = "https://api.ipify.org?format=json"
 # --- AKHIR KONFIGURASI BARU ---
 
@@ -462,3 +464,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
