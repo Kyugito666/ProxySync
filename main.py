@@ -1,9 +1,11 @@
+print("DEBUG: Starting main.py execution", flush=True)
 import os
 import random
 import shutil
 import time
 import re
 import sys
+import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests
 import ui  # Mengimpor semua fungsi UI dari file ui.py
@@ -37,299 +39,212 @@ RETRY_COUNT = 2
 
 # --- FUNGSI LOGIKA INTI ---
 
-def load_apis(file_path):
-    """Memuat daftar URL API dari file."""
-    if not os.path.exists(file_path):
-        with open(file_path, "w") as f:
-            f.write("# Masukkan URL API Anda di sini, satu per baris\n")
-        return []
-    with open(file_path, "r") as f:
-        return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+# --- Fungsi Utility ---
+def load_github_token(file_path):
+    global GITHUB_TEST_TOKEN
+    try:
+        if not os.path.exists(file_path): ui.console.print(f"[bold red]Error: '{file_path}' tidak ada.[/bold red]"); return False
+        with open(file_path, "r") as f: lines = f.readlines()
+        if len(lines) < 3: ui.console.print(f"[bold red]Error: Format '{file_path}' salah.[/bold red]"); return False
+        first_token = lines[2].strip().split(',')[0].strip()
+        if not first_token or not (first_token.startswith("ghp_") or first_token.startswith("github_pat_")): ui.console.print(f"[bold red]Error: Token awal '{file_path}' invalid.[/bold red]"); return False
+        GITHUB_TEST_TOKEN = first_token
+        ui.console.print(f"[green]✓ Token GitHub OK.[/green]"); return True
+    except Exception as e: ui.console.print(f"[bold red]Gagal load token GitHub: {e}[/bold red]"); return False
 
-# --- LOGIKA WEBSHARE IP SYNC (MENU 1) ---
+def load_apis(file_path):
+    if not os.path.exists(file_path):
+        with open(file_path, "w") as f: f.write("# URL API manual, 1 per baris\n"); return []
+    with open(file_path, "r") as f: return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 def load_webshare_apikeys(file_path):
-    """Memuat daftar API key Webshare dari file."""
     if not os.path.exists(file_path):
-        with open(file_path, "w") as f:
-            f.write("# Masukkan API key Webshare Anda di sini, SATU per baris\n")
-        return []
-    with open(file_path, "r") as f:
-        return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
+        with open(file_path, "w") as f: f.write("# API key Webshare, 1 per baris\n")
+        ui.console.print(f"[yellow]'{file_path}' dibuat. Isi API key.[/yellow]"); return []
+    with open(file_path, "r") as f: return [line.strip() for line in f if line.strip() and not line.strip().startswith("#")]
 
 def get_current_public_ip():
-    """Mengambil IP publik saat ini dari layanan eksternal."""
-    ui.console.print("1. Mengambil IP publik saat ini...")
+    ui.console.print("1. Cek IP publik...")
     try:
-        response = requests.get(IP_CHECK_SERVICE_URL, timeout=10)
+        response = requests.get(IP_CHECK_SERVICE_URL, timeout=WEBSHARE_API_TIMEOUT)
+        response.raise_for_status(); new_ip = response.json()["ip"]
+        ui.console.print(f"   -> [bold green]IP baru: {new_ip}[/bold green]"); return new_ip
+    except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Gagal cek IP: {e}[/bold red]", file=sys.stderr); return None
+
+def get_account_email(session: requests.Session) -> str:
+    try:
+        response = session.get(WEBSHARE_PROFILE_URL, timeout=WEBSHARE_API_TIMEOUT)
+        if response.status_code == 401: return "[bold red]API Key Invalid[/]"
         response.raise_for_status()
-        new_ip = response.json()["ip"]
-        ui.console.print(f"   -> [bold green]IP publik baru: {new_ip}[/bold green]")
-        return new_ip
-    except requests.RequestException as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal mendapatkan IP publik: {e}[/bold red]", file=sys.stderr)
-        return None
+        data = response.json(); email = data.get("email")
+        if email: return email
+        else: return "[yellow]Email N/A[/]"
+    except requests.exceptions.HTTPError as e: return f"[bold red]HTTP Err ({e.response.status_code})[/]"
+    except requests.RequestException: return "[bold red]Koneksi Err[/]"
+    except Exception: return "[bold red]Parsing Err[/]"
 
 def get_target_plan_id(session: requests.Session):
-    """Auto-discover Plan ID. Hanya mengembalikan jika TEPAT 1 plan aktif."""
-    ui.console.print("2. Auto-discover Plan ID...")
+    ui.console.print("2. Cek Plan ID (via /config/)...")
     try:
-        response = session.get(WEBSHARE_SUB_URL, timeout=10)
+        response = session.get(WEBSHARE_CONFIG_URL, timeout=WEBSHARE_API_TIMEOUT)
+        if response.status_code == 401: ui.console.print("   -> [bold red]ERROR: API Key invalid.[/bold red]"); return None
         response.raise_for_status()
-        
-        data = response.json()
-        plans = data.get("results", [])
-        
-        # --- LOGIKA DIPERBARUI: Cari plan 'active' ---
-        active_plans = [p for p in plans if p.get('status', '').lower() == 'active']
-        
-        if len(active_plans) == 1:
-            plan = active_plans[0]
-            plan_id = str(plan.get('id'))
-            plan_name = plan.get('plan', {}).get('name', 'N/A')
-            ui.console.print(f"   -> [green]Sukses: Ditemukan 1 plan aktif: '{plan_name}' (ID: {plan_id})[/green]")
-            return plan_id
-        
-        elif len(active_plans) == 0:
-            ui.console.print("   -> [bold red]ERROR: Tidak ada subscription plan 'active' ditemukan.[/bold red]")
-            return None
-            
-        else:
-            ui.console.print(f"   -> [bold red]ERROR: Ditemukan {len(active_plans)} plan aktif. Ambiguitas.[/bold red]")
-            return None
-
-    except requests.exceptions.HTTPError as e:
-        if e.response.status_code == 401:
-            ui.console.print("   -> [bold red]ERROR: API Key tidak valid.[/bold red]")
-        else:
-            ui.console.print(f"   -> [bold red]ERROR: HTTP Error: {e}[/bold red]")
-        return None
-    except requests.RequestException as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal koneksi ke Webshare: {e}[/bold red]")
-        return None
+        data = response.json(); plan_id = data.get("id")
+        if plan_id: plan_id_str = str(plan_id); ui.console.print(f"   -> [green]OK: Plan ID: {plan_id_str}[/green]"); return plan_id_str
+        else: ui.console.print("   -> [bold red]ERROR: /config/ tidak return 'id'.[/bold red]"); return None
+    except requests.exceptions.HTTPError as e: ui.console.print(f"   -> [bold red]ERROR HTTP: {e.response.text}[/bold red]"); return None
+    except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Koneksi: {e}[/bold red]"); return None
 
 def get_authorized_ips(session: requests.Session, plan_id: str):
-    """Mengambil semua IP yang sudah terotorisasi di Webshare."""
-    ui.console.print("3. Mengambil IP terotorisasi yang ada...")
-    params = {"plan_id": plan_id}
+    ui.console.print("3. Cek IP terdaftar...")
+    params = {"plan_id": plan_id}; ip_to_id_map = {}
     try:
-        response = session.get(WEBSHARE_AUTH_URL, params=params)
-        response.raise_for_status()
-        results = response.json().get("results", [])
-        existing_ips = [item["ip_address"] for item in results]
-        
-        if not existing_ips:
-            ui.console.print("   -> Tidak ada IP lama yang terotorisasi.")
-        else:
-            ui.console.print(f"   -> Ditemukan IP lama: {', '.join(existing_ips)}")
-        return existing_ips
-    except requests.RequestException as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal mengambil IP lama: {e}[/bold red]")
-        return []
+        response = session.get(WEBSHARE_AUTH_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
+        response.raise_for_status(); results = response.json().get("results", [])
+        for item in results:
+            ip = item.get("ip_address"); auth_id = item.get("id")
+            if ip and auth_id: ip_to_id_map[ip] = auth_id
+        if not ip_to_id_map: ui.console.print("   -> Tidak ada IP lama.")
+        else: ui.console.print(f"   -> IP lama: {', '.join(ip_to_id_map.keys())}")
+        return ip_to_id_map
+    except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Gagal cek IP lama: {e}[/bold red]"); return {}
 
-def remove_ip(session: requests.Session, ip: str, plan_id: str):
-    """Menghapus satu IP dari otorisasi Webshare."""
-    ui.console.print(f"   -> Menghapus IP lama: {ip}")
+def remove_ip(session: requests.Session, ip: str, authorization_id: int, plan_id: str):
+    ui.console.print(f"   -> Hapus IP lama: {ip} (ID: {authorization_id})")
     params = {"plan_id": plan_id}
-    payload = {"ip_address": ip} 
+    delete_url = f"{WEBSHARE_AUTH_URL}{authorization_id}/"
     try:
-        response = session.delete(WEBSHARE_AUTH_URL, json=payload, params=params)
-        if response.status_code == 204:
-            ui.console.print(f"   -> [green]Sukses hapus: {ip}[/green]")
+        response = session.delete(delete_url, params=params, timeout=WEBSHARE_API_TIMEOUT)
+        if response.status_code == 204: ui.console.print(f"   -> [green]OK Hapus: {ip}[/green]")
         else:
+            ui.console.print(f"   -> [bold red]ERROR Gagal hapus {ip} ({response.status_code})[/bold red]")
+            try: ui.console.print(f"      {response.json()}")
+            except: ui.console.print(f"      {response.text}")
             response.raise_for_status()
     except requests.RequestException as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal hapus {ip}: {e.response.text}[/bold red]")
+        ui.console.print(f"   -> [bold red]ERROR Gagal hapus {ip}[/bold red]")
+        try: ui.console.print(f"      {e.response.text}")
+        except: ui.console.print(f"      {e}")
 
 def add_ip(session: requests.Session, ip: str, plan_id: str):
-    """Menambahkan satu IP ke otorisasi Webshare."""
-    ui.console.print(f"   -> Menambahkan IP baru: {ip}")
-    params = {"plan_id": plan_id}
-    payload = {"ip_address": ip}
+    ui.console.print(f"   -> Tambah IP baru: {ip}")
+    params = {"plan_id": plan_id}; payload = {"ip_address": ip}
     try:
-        response = session.post(WEBSHARE_AUTH_URL, json=payload, params=params)
-        if response.status_code == 201:
-            ui.console.print(f"   -> [green]Sukses tambah: {ip}[/green]")
+        response = session.post(WEBSHARE_AUTH_URL, json=payload, params=params, timeout=WEBSHARE_API_TIMEOUT)
+        if response.status_code == 201: ui.console.print(f"   -> [green]OK Tambah: {ip}[/green]")
         else:
+            ui.console.print(f"   -> [bold red]ERROR Gagal tambah {ip} ({response.status_code})[/bold red]")
+            try: ui.console.print(f"      {response.json()}")
+            except: ui.console.print(f"      {response.text}")
             response.raise_for_status()
     except requests.RequestException as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal tambah {ip}: {e.response.text}[/bold red]")
+        ui.console.print(f"   -> [bold red]ERROR Gagal tambah {ip}[/bold red]")
+        try: ui.console.print(f"      {e.response.text}")
+        except: ui.console.print(f"      {e}")
 
 def run_webshare_ip_sync():
-    """Fungsi orkestrasi untuk sinkronisasi IP Webshare (Menu 1)."""
     ui.print_header()
     ui.console.print("[bold cyan]--- Sinkronisasi IP Otorisasi Webshare ---[/bold cyan]")
-    
     api_keys = load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
-    if not api_keys:
-        ui.console.print(f"[bold red]File '{WEBSHARE_APIKEYS_FILE}' kosong atau tidak ditemukan.[/bold red]")
-        return
-
+    if not api_keys: ui.console.print(f"[bold red]'{WEBSHARE_APIKEYS_FILE}' kosong.[/bold red]"); return
     new_ip = get_current_public_ip()
-    if not new_ip:
-        ui.console.print("[bold red]Gagal mendapatkan IP publik. Proses dibatalkan.[/bold red]")
-        return
-
-    ui.console.print(f"\nAkan menyinkronkan IP [bold]{new_ip}[/bold] ke [bold]{len(api_keys)}[/bold] akun...")
+    if not new_ip: ui.console.print("[bold red]Gagal IP. Batal.[/bold red]"); return
+    ui.console.print(f"\nSinkron IP [bold]{new_ip}[/bold] ke [bold]{len(api_keys)}[/bold] akun...")
 
     for api_key in api_keys:
-        ui.console.print(f"\n--- Memproses API Key: [...{api_key[-6:]}] ---")
-        
-        with requests.Session() as session:
-            session.headers.update({
-                "Authorization": f"Token {api_key}",
-                "Content-Type": "application/json",
-                "Accept": "application/json"
-            })
-            
-            try:
-                plan_id = get_target_plan_id(session)
-                
-                if not plan_id:
-                    ui.console.print("   -> [yellow]Gagal menemukan plan ID. Akun dilewati.[/yellow]")
-                    continue
+        account_email_info = "[grey]Cek email...[/]"
+        try:
+            with requests.Session() as email_session:
+                email_session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
+                account_email_info = get_account_email(email_session) # Tanpa sensor
+        except Exception: account_email_info = "[bold red]Error[/]"
+        ui.console.print(f"\n--- Key: [...{api_key[-6:]}] (Email: {account_email_info}) ---")
 
-                existing_ips = get_authorized_ips(session, plan_id)
-
-                ui.console.print("\n4. Memeriksa IP lama untuk dihapus...")
-                ips_to_delete = [ip for ip in existing_ips if ip != new_ip]
-                if not ips_to_delete:
-                    ui.console.print("   -> Tidak ada IP lama yang perlu dihapus.")
-                else:
-                    for ip in ips_to_delete:
-                        remove_ip(session, ip, plan_id)
-
-                ui.console.print("\n5. Memeriksa IP baru untuk ditambahkan...")
-                if new_ip not in existing_ips:
-                    add_ip(session, new_ip, plan_id)
-                else:
-                    ui.console.print(f"   -> IP baru ({new_ip}) sudah terotorisasi.")
-            
-            except Exception as e:
-                ui.console.print(f"   -> [bold red]!!! FATAL ERROR untuk akun ini: {e}[/bold red]")
-    
-    ui.console.print("\n[bold green]✅ Proses sinkronisasi IP Webshare selesai.[/bold green]")
-
-
-# --- LOGIKA BARU: WEBSHARE PROXY DOWNLOAD (MENU 2) ---
-
-def get_webshare_download_url(session: requests.Session, plan_id: str):
-    """
-    Mengambil username dan download token untuk membangun URL download proxy.
-    """
-    ui.console.print("   -> Memanggil 'proxy/config/' untuk URL download...")
-    params = {"plan_id": plan_id}
-    try:
-        response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=10)
-        response.raise_for_status()
-        
-        data = response.json()
-        username = data.get("username")
-        token = data.get("proxy_list_download_token")
-
-        if not username or not token:
-            ui.console.print("   -> [bold red]ERROR: 'username' atau 'proxy_list_download_token' tidak ditemukan di response.[/bold red]")
-            return None
-
-        # Membangun URL
-        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(
-            token=token,
-            username=username,
-            plan_id=plan_id
-        )
-        ui.console.print(f"   -> [green]Sukses generate URL download.[/green]")
-        return download_url
-
-    except requests.exceptions.HTTPError as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal mengambil config proxy: {e}[/bold red]")
-        return None
-    except requests.RequestException as e:
-        ui.console.print(f"   -> [bold red]ERROR: Gagal koneksi ke Webshare (config): {e}[/bold red]")
-        return None
-
-def download_proxies_from_api():
-    """
-    Mengunduh proksi dari Webshare (otomatis via apikeys.txt)
-    DAN dari URL manual di apilist.txt.
-    """
-    ui.print_header()
-    ui.console.print("[bold cyan]--- Unduh Proksi dari Daftar API ---[/bold cyan]")
-    
-    # 1. Kosongkan file proxylist.txt
-    if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
-        choice = ui.Prompt.ask(
-            f"[bold yellow]File '{PROXYLIST_SOURCE_FILE}' berisi data. Hapus konten lama sebelum mengunduh?[/bold yellow]",
-            choices=["y", "n"], default="y"
-        ).lower()
-        if choice == 'n':
-            ui.console.print("[cyan]Operasi dibatalkan. Proksi tidak diunduh.[/cyan]")
-            return
-    
-    try:
-        with open(PROXYLIST_SOURCE_FILE, "w") as f: pass
-        ui.console.print(f"[green]'{PROXYLIST_SOURCE_FILE}' telah siap untuk diisi data baru.[/green]\n")
-    except IOError as e:
-        ui.console.print(f"[bold red]Gagal membersihkan file: {e}[/bold red]"); return
-
-    all_download_urls = []
-
-    # 2. Proses Auto-discover dari apikeys.txt
-    ui.console.print(f"[bold]Memulai Auto-Discover dari '{WEBSHARE_APIKEYS_FILE}'...[/bold]")
-    api_keys = load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
-    if not api_keys:
-        ui.console.print(f"[yellow]'{WEBSHARE_APIKEYS_FILE}' kosong. Lanjut...[/yellow]")
-    
-    for api_key in api_keys:
-        ui.console.print(f"\n--- Memproses API Key: [...{api_key[-6:]}] ---")
         with requests.Session() as session:
             session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
             try:
                 plan_id = get_target_plan_id(session)
-                if not plan_id:
-                    ui.console.print("   -> [yellow]Gagal menemukan plan ID. Akun dilewati.[/yellow]")
-                    continue
-                
+                if not plan_id: ui.console.print(f"   -> [bold red]Akun skip.[/bold red]"); continue
+                authorized_ips_map = get_authorized_ips(session, plan_id)
+                existing_ips = list(authorized_ips_map.keys())
+                if new_ip in existing_ips: ui.console.print(f"   -> [green]IP baru ({new_ip}) sudah ada. Skip.[/green]"); continue
+                ui.console.print("\n4. Hapus IP lama...");
+                if not existing_ips: ui.console.print("   -> Tidak ada IP lama.")
+                else:
+                    for ip_to_delete, auth_id_to_delete in authorized_ips_map.items(): remove_ip(session, ip_to_delete, auth_id_to_delete, plan_id)
+                ui.console.print("\n5. Tambah IP baru..."); add_ip(session, new_ip, plan_id)
+            except Exception as e: ui.console.print(f"   -> [bold red]!!! ERROR Hapus/Tambah. Lanjut akun berikutnya.[/bold red]")
+    ui.console.print("\n[bold green]✅ Sinkronisasi IP selesai.[/bold green]")
+
+def get_webshare_download_url(session: requests.Session, plan_id: str):
+    ui.console.print("   -> Get URL download (via /config/)...")
+    params = {"plan_id": plan_id}
+    try:
+        response = session.get(WEBSHARE_CONFIG_URL, params=params, timeout=WEBSHARE_API_TIMEOUT)
+        response.raise_for_status()
+        data = response.json(); token = data.get("proxy_list_download_token")
+        if not token: ui.console.print("   -> [bold red]ERROR: 'proxy_list_download_token' N/A.[/bold red]"); return None
+        # Format URL pakai 'username' literal
+        download_url = WEBSHARE_DOWNLOAD_URL_FORMAT.format(token=token, plan_id=plan_id)
+        ui.console.print(f"   -> [green]OK URL download.[/green]"); return download_url
+    except requests.exceptions.HTTPError as e: ui.console.print(f"   -> [bold red]ERROR Config: {e.response.text}[/bold red]"); return None
+    except requests.RequestException as e: ui.console.print(f"   -> [bold red]ERROR Koneksi (config): {e}[/bold red]"); return None
+
+def download_proxies_from_api():
+    ui.print_header()
+    ui.console.print("[bold cyan]--- Unduh Proksi dari API ---[/bold cyan]")
+    if os.path.exists(PROXYLIST_SOURCE_FILE) and os.path.getsize(PROXYLIST_SOURCE_FILE) > 0:
+        choice = ui.Prompt.ask(f"[bold yellow]'{PROXYLIST_SOURCE_FILE}' ada. Hapus?[/bold yellow]", choices=["y", "n"], default="y").lower()
+        if choice == 'n': ui.console.print("[cyan]Batal.[/cyan]"); return
+    try:
+        with open(PROXYLIST_SOURCE_FILE, "w") as f: pass
+        ui.console.print(f"[green]'{PROXYLIST_SOURCE_FILE}' siap.[/green]\n")
+    except IOError as e: ui.console.print(f"[bold red]Gagal clear file: {e}[/bold red]"); return
+
+    all_download_targets: list[tuple[str, str | None]] = []
+    ui.console.print(f"[bold]Auto-Discover dari '{WEBSHARE_APIKEYS_FILE}'...[/bold]")
+    api_keys = load_webshare_apikeys(WEBSHARE_APIKEYS_FILE)
+    if not api_keys: ui.console.print(f"[yellow]'{WEBSHARE_APIKEYS_FILE}' kosong.[/yellow]")
+
+    for api_key in api_keys:
+        account_email_info = "[grey]Cek email...[/]"
+        try:
+            with requests.Session() as email_session:
+                email_session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
+                account_email_info = get_account_email(email_session) # Tanpa sensor
+        except Exception: account_email_info = "[bold red]Error[/]"
+        ui.console.print(f"\n--- Key: [...{api_key[-6:]}] (Email: {account_email_info}) ---")
+
+        with requests.Session() as session:
+            session.headers.update({"Authorization": f"Token {api_key}", "Accept": "application/json"})
+            try:
+                plan_id = get_target_plan_id(session)
+                if not plan_id: ui.console.print(f"   -> [bold red]Akun skip.[/bold red]"); continue
                 download_url = get_webshare_download_url(session, plan_id)
-                if download_url:
-                    all_download_urls.append(download_url)
-            except Exception as e:
-                ui.console.print(f"   -> [bold red]!!! FATAL ERROR untuk akun ini: {e}[/bold red]")
+                if download_url: all_download_targets.append((download_url, api_key))
+                else: ui.console.print("   -> [yellow]Gagal URL. Skip.[/yellow]")
+            except Exception as e: ui.console.print(f"   -> [bold red]!!! FATAL: {e}[/bold red]")
 
-    # 3. Proses URL manual dari apilist.txt
-    ui.console.print(f"\n[bold]Memuat URL manual dari '{APILIST_SOURCE_FILE}'...[/bold]")
+    ui.console.print(f"\n[bold]Load URL manual '{APILIST_SOURCE_FILE}'...[/bold]")
     manual_urls = load_apis(APILIST_SOURCE_FILE)
-    if not manual_urls:
-        ui.console.print(f"[yellow]'{APILIST_SOURCE_FILE}' kosong. Tidak ada URL manual.[/yellow]")
+    if not manual_urls: ui.console.print(f"[yellow]'{APILIST_SOURCE_FILE}' kosong.[/yellow]")
     else:
-        ui.console.print(f"[green]Ditemukan {len(manual_urls)} URL manual.[/green]")
-        all_download_urls.extend(manual_urls)
+        ui.console.print(f"[green]{len(manual_urls)} URL manual.[/green]"); all_download_targets.extend([(url, None) for url in manual_urls])
 
-    # 4. Jalankan Proses Download
-    if not all_download_urls:
-        ui.console.print("\n[bold red]Tidak ada URL API (baik otomatis/manual) untuk diunduh.[/bold red]")
-        return
-
-    ui.console.print(f"\n[bold cyan]Siap mengunduh dari total {len(all_download_urls)} URL...[/bold cyan]")
-    all_downloaded_proxies = ui.run_sequential_api_downloads(all_download_urls)
-
-    if not all_downloaded_proxies:
-        ui.console.print("\n[bold yellow]Tidak ada proksi yang berhasil diunduh dari semua API.[/bold yellow]")
-        return
-
-    # 5. Simpan ke proxylist.txt
+    if not all_download_targets: ui.console.print("\n[bold red]Tidak ada URL API.[/bold red]"); return
+    ui.console.print(f"\n[bold cyan]Siap unduh dari {len(all_download_targets)} URL...[/bold cyan]")
+    all_downloaded_proxies = ui.run_sequential_api_downloads(all_download_targets)
+    if not all_downloaded_proxies: ui.console.print("\n[bold yellow]Tidak ada proksi diunduh.[/bold yellow]"); return
     try:
         with open(PROXYLIST_SOURCE_FILE, "w") as f:
-            for proxy in all_downloaded_proxies:
-                f.write(proxy + "\n")
-        
-        ui.console.print(f"\n[bold green]✅ {len(all_downloaded_proxies)} proksi baru berhasil disimpan ke '{PROXYLIST_SOURCE_FILE}'[/bold green]")
-    except IOError as e:
-        ui.console.print(f"\n[bold red]Gagal menulis ke file '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
+            for proxy in all_downloaded_proxies: f.write(proxy + "\n")
+        ui.console.print(f"\n[bold green]✅ {len(all_downloaded_proxies)} proksi ke '{PROXYLIST_SOURCE_FILE}'[/bold green]")
+    except IOError as e: ui.console.print(f"\n[bold red]Gagal tulis '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
 
 
-# --- SISA FUNGSI (Konversi, Tes, Distribusi) ---
-
+# === PERUBAHAN KONVERSI v2 ===
 def convert_proxylist_to_http():
+    """Konversi proxy dari proxylist.txt ke format http dan simpan ke proxy.txt."""
     if not os.path.exists(PROXYLIST_SOURCE_FILE):
         ui.console.print(f"[bold red]Error: '{PROXYLIST_SOURCE_FILE}' tidak ditemukan.[/bold red]")
         return
@@ -338,190 +253,212 @@ def convert_proxylist_to_http():
         with open(PROXYLIST_SOURCE_FILE, "r") as f:
             lines = f.readlines()
     except Exception as e:
-        ui.console.print(f"[bold red]Gagal membaca file '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
+        ui.console.print(f"[bold red]Gagal membaca '{PROXYLIST_SOURCE_FILE}': {e}[/bold red]")
         return
 
-    cleaned_proxies = []
-    for line in lines:
-        line = line.strip()
-        if not line:
-            continue
-        
-        parts = re.split(r'(https?://)', line)
-        if len(parts) > 3:
-            for i in range(1, len(parts), 2):
-                cleaned_proxies.append(parts[i] + parts[i+1])
-        else:
-            cleaned_proxies.append(line)
+    # Bersihkan baris kosong dan komentar sebelum menghitung
+    cleaned_proxies_input = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
 
-    if not cleaned_proxies:
-        ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong.[/yellow]")
+    if not cleaned_proxies_input:
+        ui.console.print(f"[yellow]'{PROXYLIST_SOURCE_FILE}' kosong atau hanya berisi komentar.[/yellow]")
         return
 
-    ui.console.print(f"Mengonversi {len(cleaned_proxies)} proksi...")
-    
+    ui.console.print(f"Mengonversi {len(cleaned_proxies_input)} proksi dari '{PROXYLIST_SOURCE_FILE}'...")
+
     converted_proxies = []
-    for p in cleaned_proxies:
+    skipped_count = 0
+    skipped_examples = [] # Untuk menampilkan contoh yang gagal
+
+    # Regex untuk host (bisa IP v4 atau domain)
+    host_pattern = r"((?:[0-9]{1,3}\.){3}[0-9]{1,3}|(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,})"
+    # Regex untuk port
+    port_pattern = r"[0-9]{1,5}"
+    # Regex untuk user & pass (bisa mengandung karakter apa saja KECUALI '@' dan ':')
+    # Modifikasi: Bolehkan ':' di password, tapi asumsi ':' terakhir sebelum port
+    user_pass_pattern = r"[^@:]+" # User
+    # pass_pattern = r"[^@]+" # Pass - revisi nanti
+
+    for p in cleaned_proxies_input:
+        p = p.strip()
+        if not p:
+            continue
+
+        # 1. Cek format http:// atau https://
         if p.startswith("http://") or p.startswith("https://"):
             converted_proxies.append(p)
             continue
-        parts = p.split(':')
-        if len(parts) == 2:
-            converted_proxies.append(f"http://{parts[0]}:{parts[1]}")
-        elif len(parts) == 4:
-            converted_proxies.append(f"http://{parts[2]}:{parts[3]}@{parts[0]}:{parts[1]}")
-        elif len(parts) == 3 and '@' in parts[1]:
-            converted_proxies.append(f"http://{p}")
+
+        converted = None
+        # 2. Cek format user:pass@host:port (lebih prioritas karena ada '@')
+        #    Regex ini mencoba menangkap user:pass, host, dan port
+        match_user_pass_host_port = re.match(rf"^(?P<user_pass>.+)@(?P<host>{host_pattern}):(?P<port>{port_pattern})$", p)
+        if match_user_pass_host_port:
+            user_pass = match_user_pass_host_port.group("user_pass")
+            host = match_user_pass_host_port.group("host")
+            port = match_user_pass_host_port.group("port")
+            # Cek validitas port (harus antara 1-65535)
+            if 1 <= int(port) <= 65535:
+                converted = f"http://{user_pass}@{host}:{port}"
+            # Jika port tidak valid, akan diskip nanti
+
+        # 3. Jika tidak ada '@', coba split pakai ':'
+        if not converted:
+            parts = p.split(':')
+            if len(parts) == 4:
+                # Asumsi ip:port:user:pass
+                ip, port, user, password = parts
+                # Cek apakah bagian pertama adalah IP/Host dan kedua adalah port
+                if re.match(rf"^{host_pattern}$", ip) and re.match(rf"^{port_pattern}$", port):
+                    if 1 <= int(port) <= 65535:
+                        converted = f"http://{user}:{password}@{ip}:{port}"
+            elif len(parts) == 2:
+                # Asumsi ip:port
+                ip, port = parts
+                if re.match(rf"^{host_pattern}$", ip) and re.match(rf"^{port_pattern}$", port):
+                     if 1 <= int(port) <= 65535:
+                        converted = f"http://{ip}:{port}"
+
+        # 4. Jika berhasil dikonversi, tambahkan ke list
+        if converted:
+            converted_proxies.append(converted)
         else:
-            ui.console.print(f"[yellow]Format tidak dikenali: {p}[/yellow]")
+            skipped_count += 1
+            if len(skipped_examples) < 5: # Simpan 5 contoh pertama
+                skipped_examples.append(p)
+
+    # --- Laporan Hasil ---
+    if skipped_count > 0:
+        ui.console.print(f"[yellow]{skipped_count} baris dilewati karena format tidak dikenali/valid.[/yellow]")
+        if skipped_examples:
+            ui.console.print("[yellow]Contoh yang dilewati:[/yellow]")
+            for ex in skipped_examples:
+                ui.console.print(f"  - {ex}")
 
     if not converted_proxies:
-        ui.console.print("[bold red]Tidak ada proksi yang dikonversi.[/bold red]")
+        ui.console.print("[bold red]Tidak ada proksi yang berhasil dikonversi.[/bold red]")
         return
 
+    # --- Tulis ke file proxy.txt ---
     try:
         with open(PROXY_SOURCE_FILE, "w") as f:
             for proxy in converted_proxies:
                 f.write(proxy + "\n")
         
-        open(PROXYLIST_SOURCE_FILE, "w").close()
+        # Kosongkan proxylist.txt
+        open(PROXYLIST_SOURCE_FILE, "w").close() 
         
-        ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi dipindahkan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
+        ui.console.print(f"[bold green]✅ {len(converted_proxies)} proksi dikonversi dan disimpan ke '{PROXY_SOURCE_FILE}'.[/bold green]")
         ui.console.print(f"[bold cyan]'{PROXYLIST_SOURCE_FILE}' telah dikosongkan.[/bold cyan]")
 
     except Exception as e:
         ui.console.print(f"[bold red]Gagal menulis ke file: {e}[/bold red]")
+# === AKHIR PERUBAHAN KONVERSI v2 ===
 
 
 def load_and_deduplicate_proxies(file_path):
     if not os.path.exists(file_path): return []
-    with open(file_path, "r") as f:
-        proxies = [line.strip() for line in f if line.strip()]
-    unique_proxies = sorted(list(set(proxies)))
-    if len(proxies) > len(unique_proxies):
-        ui.console.print(f"[yellow]Menghapus {len(proxies) - len(unique_proxies)} duplikat.[/yellow]")
-    with open(file_path, "w") as f:
-        for proxy in unique_proxies: f.write(proxy + "\n")
+    try:
+        with open(file_path, "r") as f: proxies = [line.strip() for line in f if line.strip()]
+    except Exception as e: ui.console.print(f"[bold red]Gagal baca '{file_path}': {e}[/bold red]"); return []
+    unique_proxies = sorted(list(set(proxies))); duplicates_removed = len(proxies) - len(unique_proxies)
+    if duplicates_removed > 0: ui.console.print(f"[yellow]Hapus {duplicates_removed} duplikat.[/yellow]")
+    try:
+        with open(file_path, "w") as f:
+            for proxy in unique_proxies: f.write(proxy + "\n")
+    except Exception as e: ui.console.print(f"[bold red]Gagal tulis '{file_path}' (dedup): {e}[/bold red]"); return proxies
     return unique_proxies
 
 def load_paths(file_path):
-    if not os.path.exists(file_path): return []
-    with open(file_path, "r") as f:
-        return [line.strip() for line in f if line.strip() and os.path.isdir(line.strip())]
+    if not os.path.exists(file_path): ui.console.print(f"[bold red]'{file_path}' N/A.[/bold red]"); return []
+    try:
+        with open(file_path, "r") as f:
+            project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+            raw_paths = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+            absolute_paths = []; invalid_paths = 0
+            for p in raw_paths:
+                abs_p = os.path.join(project_root, p)
+                if os.path.isdir(abs_p): absolute_paths.append(abs_p)
+                else: invalid_paths += 1; ui.console.print(f"[yellow]Path invalid: {abs_p} ('{p}') [/yellow]")
+            if invalid_paths > 0: ui.console.print(f"[yellow]{invalid_paths} path skip.[/yellow]")
+            return absolute_paths
+    except Exception as e: ui.console.print(f"[bold red]Gagal baca '{file_path}': {e}[/bold red]"); return []
 
 def backup_file(file_path, backup_path):
     if os.path.exists(file_path):
-        shutil.copy(file_path, backup_path)
-        ui.console.print(f"[green]Backup dibuat: '{backup_path}'[/green]")
+        try: shutil.copy(file_path, backup_path); ui.console.print(f"[green]Backup: '{backup_path}'[/green]")
+        except Exception as e: ui.console.print(f"[bold red]Gagal backup '{backup_path}': {e}[/bold red]")
 
 def check_proxy_final(proxy):
-    """Fungsi pengetesan proksi yang telah dioptimalkan."""
+    if GITHUB_TEST_TOKEN is None: return proxy, False, "Token GitHub?"
     proxies_dict = {"http": proxy, "https": proxy}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
-    
-    for url in CHECK_URLS: # Mencoba setiap URL di dalam daftar
-        try:
-            response = requests.get(url, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
-            
-            if response.status_code == 407:
-                return proxy, False, "Proxy Membutuhkan Otentikasi"
-            
-            response.raise_for_status() # Cek status 200 OK
-            
-            if '.' in response.text or ':' in response.text:
-                return proxy, True, "OK"
-            else:
-                continue
-
-        except requests.exceptions.RequestException:
-            continue
-            
-    return proxy, False, "Gagal Terhubung"
+    headers = {'User-Agent': 'ProxySync-Tester/1.0', 'Authorization': f'Bearer {GITHUB_TEST_TOKEN}', 'Accept': 'application/vnd.github.v3+json'}
+    try:
+        response = requests.get(GITHUB_API_TEST_URL, proxies=proxies_dict, timeout=PROXY_TIMEOUT, headers=headers)
+        if response.status_code == 401: return proxy, False, "GitHub Auth (401)"
+        if response.status_code == 403: return proxy, False, "GitHub Forbidden (403)"
+        if response.status_code == 407: return proxy, False, "Proxy Auth (407)"
+        if response.status_code == 429: return proxy, False, "GitHub Rate Limit (429)"
+        response.raise_for_status()
+        if response.text and len(response.text) > 5: return proxy, True, "OK"
+        else: return proxy, False, "Respons GitHub?"
+    except requests.exceptions.Timeout: return proxy, False, f"Timeout ({PROXY_TIMEOUT}s)"
+    except requests.exceptions.ProxyError as e: reason = str(e).split(':')[-1].strip(); return proxy, False, f"Proxy Error ({reason[:30]})"
+    except requests.exceptions.RequestException as e: reason = str(e.__class__.__name__); return proxy, False, f"Koneksi Gagal ({reason})"
 
 def distribute_proxies(proxies, paths):
-    if not proxies or not paths: return
-    ui.console.print(f"\n[cyan]Mendistribusikan {len(proxies)} proksi valid...[/cyan]")
+    if not proxies or not paths: ui.console.print("[yellow]Distribusi skip (no data).[/yellow]"); return
+    ui.console.print(f"\n[cyan]Distribusi {len(proxies)} proksi ke {len(paths)} path...[/cyan]")
+    project_root_abs = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
     for path in paths:
-        if not os.path.isdir(path):
-            ui.console.print(f"[yellow]Lewati path tidak valid: {path}[/yellow]")
-            continue
-        file_name = "proxies.txt" if os.path.exists(os.path.join(path, "proxies.txt")) else "proxy.txt"
-        file_path = os.path.join(path, file_name)
+        if not os.path.isdir(path): ui.console.print(f"  [yellow]✖ Skip:[/yellow] Path invalid: {path}"); continue
+        file_name = "proxies.txt"; file_path = os.path.join(path, file_name)
+        if not os.path.exists(file_path): file_name = "proxy.txt"; file_path = os.path.join(path, file_name)
+        rel_path_display = os.path.relpath(file_path, project_root_abs)
         proxies_shuffled = random.sample(proxies, len(proxies))
         try:
             with open(file_path, "w") as f:
                 for proxy in proxies_shuffled: f.write(proxy + "\n")
-            ui.console.print(f"  [green]✔[/green] Berhasil menulis ke [bold]{file_path}[/bold]")
-        except IOError as e:
-            ui.console.print(f"  [red]✖[/red] Gagal menulis ke [bold]{file_path}[/bold]: {e}")
+            ui.console.print(f"  [green]✔[/green] Tulis ke [bold]{rel_path_display}[/bold]")
+        except IOError as e: ui.console.print(f"  [red]✖[/red] Gagal tulis [bold]{rel_path_display}[/bold]: {e}")
 
 def save_good_proxies(proxies, file_path):
     try:
         with open(file_path, "w") as f:
-            for proxy in proxies:
-                f.write(proxy + "\n")
-        ui.console.print(f"\n[bold green]✅ {len(proxies)} proksi valid berhasil disimpan ke '{file_path}'[/bold green]")
-    except IOError as e:
-        ui.console.print(f"\n[bold red]✖ Gagal menyimpan proksi: {e}[/bold red]")
-
+            for proxy in proxies: f.write(proxy + "\n")
+        ui.console.print(f"\n[bold green]✅ {len(proxies)} proksi valid simpan ke '{file_path}'[/bold green]")
+    except IOError as e: ui.console.print(f"\n[bold red]✖ Gagal simpan '{file_path}': {e}[/bold red]")
 
 def run_full_process():
     ui.print_header()
-    distribute_choice = ui.Prompt.ask(
-        "[bold yellow]Distribusikan proksi yang valid ke semua path target?[/bold yellow]",
-        choices=["y", "n"], default="y"
-    ).lower()
-    
-    ui.console.print("-" * 40)
-    ui.console.print("[bold cyan]Langkah 1: Backup & Bersihkan Proksi...[/bold cyan]")
+    if not load_github_token(GITHUB_TOKENS_FILE): ui.console.print("[bold red]Tes proxy batal (token GitHub?).[/bold red]"); return
+    distribute_choice = ui.Prompt.ask("[bold yellow]Distribusi proksi valid?[/bold yellow]", choices=["y", "n"], default="y").lower()
+    ui.console.print("-" * 40); ui.console.print("[bold cyan]Langkah 1: Backup & Clean...[/bold cyan]")
     backup_file(PROXY_SOURCE_FILE, PROXY_BACKUP_FILE)
     proxies = load_and_deduplicate_proxies(PROXY_SOURCE_FILE)
-    if not proxies:
-        ui.console.print("[bold red]Proses berhenti: 'proxy.txt' kosong.[/bold red]"); return
-    ui.console.print(f"Siap menguji {len(proxies)} proksi unik.")
-    ui.console.print("-" * 40)
-
-    ui.console.print("[bold cyan]Langkah 2: Menjalankan Tes Akurat...[/bold cyan]")
+    if not proxies: ui.console.print("[bold red]Stop: 'proxy.txt' kosong.[/bold red]"); return
+    ui.console.print(f"Siap tes {len(proxies)} proksi unik."); ui.console.print("-" * 40)
+    ui.console.print("[bold cyan]Langkah 2: Tes Akurat GitHub...[/bold cyan]")
     good_proxies = ui.run_concurrent_checks_display(proxies, check_proxy_final, MAX_WORKERS, FAIL_PROXY_FILE)
-    if not good_proxies:
-        ui.console.print("[bold red]Proses berhenti: Tidak ada proksi yang berfungsi.[/bold red]"); return
-    ui.console.print(f"[bold green]Ditemukan {len(good_proxies)} proksi yang berfungsi.[/bold green]")
-    ui.console.print("-" * 40)
-
+    if not good_proxies: ui.console.print("[bold red]Stop: Tidak ada proksi lolos.[/bold red]"); return
+    ui.console.print(f"[bold green]{len(good_proxies)} proksi lolos.[/bold green]"); ui.console.print("-" * 40)
     if distribute_choice == 'y':
         ui.console.print("[bold cyan]Langkah 3: Distribusi...[/bold cyan]")
         paths = load_paths(PATHS_SOURCE_FILE)
-        if not paths:
-            ui.console.print("[bold red]Proses berhenti: 'paths.txt' kosong.[/bold red]"); return
-        distribute_proxies(good_proxies, paths)
-        ui.console.print("\n[bold green]✅ Semua tugas selesai![/bold green]")
-    else:
-        ui.console.print(f"[bold cyan]Langkah 3: Menyimpan proksi valid...[/bold cyan]")
-        save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
-
+        if not paths: ui.console.print("[bold red]Stop: 'paths.txt' kosong/invalid.[/bold red]"); return
+        distribute_proxies(good_proxies, paths); save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
+    else: ui.console.print("[bold cyan]Langkah 3: Simpan proksi valid...[/bold cyan]"); save_good_proxies(good_proxies, SUCCESS_PROXY_FILE)
+    ui.console.print("\n[bold green]✅ Semua selesai![/bold green]")
 
 def main():
+    os.chdir(os.path.dirname(os.path.abspath(__file__)))
     while True:
-        ui.print_header()
-        choice = ui.display_main_menu()
-        
-        if choice == "1":
-            run_webshare_ip_sync()
-            ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
-        elif choice == "2":
-            # Fungsi ini sekarang sudah di-upgrade
-            download_proxies_from_api() 
-            ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
-        elif choice == "3":
-            convert_proxylist_to_http()
-            ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
-        elif choice == "4":
-            run_full_process()
-            ui.Prompt.ask("\n[bold]Tekan Enter untuk kembali...[/bold]")
-        elif choice == "5":
-            ui.manage_paths_menu_display()
-        elif choice == "6":
-            ui.console.print("[bold cyan]Sampai jumpa![/bold cyan]"); break
+        ui.print_header(); choice = ui.display_main_menu()
+        if choice == "1": run_webshare_ip_sync(); ui.Prompt.ask("\n[bold]Tekan Enter...[/bold]")
+        elif choice == "2": download_proxies_from_api(); ui.Prompt.ask("\n[bold]Tekan Enter...[/bold]")
+        elif choice == "3": convert_proxylist_to_http(); ui.Prompt.ask("\n[bold]Tekan Enter...[/bold]")
+        elif choice == "4": run_full_process(); ui.Prompt.ask("\n[bold]Tekan Enter...[/bold]")
+        elif choice == "5": ui.manage_paths_menu_display() # Placeholder
+        elif choice == "6": ui.console.print("[bold cyan]Bye![/bold cyan]"); break
 
 if __name__ == "__main__":
     main()
